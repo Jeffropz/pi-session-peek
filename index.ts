@@ -12,16 +12,17 @@
  *   Tab                 切换范围：当前目录 <-> 全局
  *   ↑ / ↓               选择会话
  *   PgUp / PgDn         滚动右侧预览（整页）
- *   Ctrl+U / Ctrl+D     滚动右侧预览（半页）
+ *   Ctrl+U / Ctrl+F     滚动右侧预览（半页）
  *   Shift+↑ / Shift+↓   滚动右侧预览（3 行）
  *   Ctrl+N / Ctrl+P     跳到下一个 / 上一个关键词命中处
+ *   Ctrl+D              删除选中的会话（y 二次确认；优先 trash 回收站，否则直接删文件）
+ *   Ctrl+R              重命名选中的会话（追加 pi 原生 session_info 条目，Enter 确认 / Esc 取消）
  *   Enter               进入选中的会话（pi --session 等效）
  *   Esc                 关闭
  *
  * 终端启动时直接打开:
- *   pi --peek                启动 pi 并打开搜索界面
- *   pi --peek=getHttpValue   启动并预填关键词
- *   pi --rp                  --peek 的别名
+ *   pi --rp                  启动 pi 并打开搜索界面
+ *   pi --peek=getHttpValue   启动并预填关键词（--peek 必须带值）
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -35,9 +36,10 @@ import {
   type Component,
   type Focusable,
 } from "@earendil-works/pi-tui";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // 数据层：扫描 + 解析会话 JSONL（按 mtime 缓存，二次打开秒开）
@@ -177,6 +179,15 @@ function scanSessions(): PeekSession[] {
 
 const normPath = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 
+/** ISO 时间 → 本地时区 "MM-DD HH:mm"；withYear 或非本年份时为 "YYYY-MM-DD HH:mm" */
+function fmtTime(iso: string, withYear = false): string {
+  const d = new Date(iso);
+  if (!iso || Number.isNaN(d.getTime())) return withYear ? "????-??-?? ??:??" : "??-?? ??:??";
+  const p = (n: number) => String(n).padStart(2, "0");
+  const md = `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return withYear || d.getFullYear() !== new Date().getFullYear() ? `${d.getFullYear()}-${md}` : md;
+}
+
 function padEndVisible(s: string, w: number): string {
   const v = visibleWidth(s);
   return v >= w ? truncateToWidth(s, w) : s + " ".repeat(w - v);
@@ -231,12 +242,21 @@ class PeekComponent implements Component, Focusable {
   private previewKey = "";
   private previewLines: string[] = [];
   private matchLines: number[] = []; // 预览中命中消息的行号（用于 Ctrl+N/P 跳转）
+  private confirmingDelete = false; // Ctrl+D 二次确认状态
+  private renaming = false; // Ctrl+R 重命名输入态
+  private renameInput: Input;
   private cachedWidth = -1;
   private cachedLines: string[] = [];
   private _focused = false;
 
   onResume?: (s: PeekSession) => void;
   onCancel?: () => void;
+  /** 删除会话（由命令层注入：优先 trash，失败回退直接删文件）；返回是否成功 */
+  onDelete?: (s: PeekSession) => Promise<boolean>;
+  /** 重命名会话（由命令层注入：追加 session_info 条目）；返回是否成功 */
+  onRename?: (s: PeekSession, name: string) => Promise<boolean>;
+  /** 异步操作完成后请求 TUI 重绘（由命令层注入 tui.requestRender） */
+  requestRender?: () => void;
 
   constructor(
     private all: PeekSession[],
@@ -246,6 +266,7 @@ class PeekComponent implements Component, Focusable {
     initialQuery: string,
   ) {
     this.input = new Input({ placeholder: "输入关键词实时过滤（对话正文 / 会话名 / 目录）" });
+    this.renameInput = new Input({ placeholder: "新会话名（Enter 确认 / Esc 取消，留空取消）" });
     if (initialQuery) this.input.setValue(initialQuery);
     // 当前目录有会话时默认当前目录，否则全局
     const cur = normPath(currentCwd);
@@ -253,13 +274,14 @@ class PeekComponent implements Component, Focusable {
     this.refilter();
   }
 
-  // Focusable：把焦点传给内部 Input，保证中文/IME 输入光标位置正确
+  // Focusable：把焦点传给当前活跃的输入框（搜索框 / 重命名框），保证中文/IME 光标位置正确
   get focused(): boolean {
     return this._focused;
   }
   set focused(v: boolean) {
     this._focused = v;
-    this.input.focused = v;
+    this.input.focused = v && !this.renaming;
+    this.renameInput.focused = v && this.renaming;
   }
 
   getQuery(): string {
@@ -270,7 +292,9 @@ class PeekComponent implements Component, Focusable {
     return this.getQuery().toLowerCase();
   }
 
-  private refilter(): void {
+  /** 重算过滤结果；keepSelection 时尽量保持原选中会话（用于重命名后） */
+  private refilter(keepSelection = false): void {
+    const prev = keepSelection ? this.filtered[this.selected] : undefined;
     const kw = this.kw();
     let out = this.all;
     if (this.scope === "current") {
@@ -279,18 +303,93 @@ class PeekComponent implements Component, Focusable {
     }
     if (kw) out = out.filter((s) => s.searchText.includes(kw));
     this.filtered = out;
-    this.selected = 0;
-    this.listOffset = 0;
+    const idx = prev ? out.indexOf(prev) : -1;
+    this.selected = idx >= 0 ? idx : keepSelection ? Math.min(this.selected, Math.max(0, out.length - 1)) : 0;
+    if (!keepSelection) this.listOffset = 0;
     this.previewKey = ""; // 触发预览重建，buildPreview 会重新定位滚动位置
   }
 
   private bodyHeight(): number {
-    return Math.max(8, Math.min(this.termRows - 12, 30));
+    const rows = process.stdout.rows || this.termRows || 24; // 实时读取，终端拉伸后布局跟随
+    return Math.max(8, Math.min(rows - 12, 30));
   }
 
   handleInput(data: string): void {
+    // 重命名输入态：Enter 提交，Esc 取消（不会误关界面）
+    if (this.renaming) {
+      if (matchesKey(data, Key.enter)) {
+        const s = this.filtered[this.selected];
+        const name = this.renameInput.getValue().trim();
+        this.renaming = false;
+        this.focused = this._focused; // 焦点还给搜索框
+        this.invalidate();
+        if (s && name && this.onRename) {
+          void this.onRename(s, name).then((ok) => {
+            if (ok) {
+              s.name = name;
+              // 名字参与搜索，同步重建索引；新名字可能不再匹配关键词，重算列表但尽量保住选中项
+              s.searchText = (s.msgs.map((m) => m.text).join(" ") + " " + name + " " + s.cwd).toLowerCase();
+              this.refilter(true);
+            }
+            this.invalidate();
+            this.requestRender?.();
+          });
+        }
+        return;
+      }
+      if (matchesKey(data, Key.escape)) {
+        this.renaming = false;
+        this.focused = this._focused;
+        this.invalidate();
+        return;
+      }
+      this.renameInput.handleInput(data);
+      this.invalidate();
+      return;
+    }
+    // 删除二次确认中：y 执行，任意其他键取消（含 Esc，不会误关界面）
+    if (this.confirmingDelete) {
+      this.confirmingDelete = false;
+      this.invalidate();
+      if (data === "y" || data === "Y") {
+        const s = this.filtered[this.selected];
+        if (s && this.onDelete) {
+          void this.onDelete(s).then((ok) => {
+            if (ok) {
+              let i = this.all.indexOf(s);
+              if (i >= 0) this.all.splice(i, 1);
+              i = this.filtered.indexOf(s);
+              if (i >= 0) this.filtered.splice(i, 1);
+              // 选中位置保持在原位（夹取），预览重建
+              this.selected = Math.min(this.selected, Math.max(0, this.filtered.length - 1));
+              this.previewKey = "";
+            }
+            this.invalidate();
+            this.requestRender?.();
+          });
+        }
+      }
+      return;
+    }
     if (matchesKey(data, Key.escape)) {
       this.onCancel?.();
+      return;
+    }
+    if (matchesKey(data, Key.ctrl("d"))) {
+      if (this.filtered.length && this.onDelete) {
+        this.confirmingDelete = true;
+        this.invalidate();
+      }
+      return;
+    }
+    if (matchesKey(data, Key.ctrl("r"))) {
+      const s = this.filtered[this.selected];
+      if (s && this.onRename) {
+        this.renaming = true;
+        this.renameInput.setValue(s.name || "");
+        this.focused = this._focused; // 焦点切到重命名框
+        this.invalidate();
+      }
       return;
     }
     if (matchesKey(data, Key.tab)) {
@@ -321,7 +420,7 @@ class PeekComponent implements Component, Focusable {
       this.invalidate();
       return;
     }
-    if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.ctrl("d"))) {
+    if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.ctrl("f"))) {
       const step = matchesKey(data, Key.pageDown) ? this.bodyHeight() : Math.max(1, this.bodyHeight() >> 1);
       this.previewOffset += step;
       this.invalidate();
@@ -351,8 +450,9 @@ class PeekComponent implements Component, Focusable {
       return;
     }
     // 其余按键交给输入框（字符、删除、光标移动、IME 等）
+    const before = this.input.getValue();
     this.input.handleInput(data);
-    this.refilter();
+    if (this.input.getValue() !== before) this.refilter(); // 纯光标移动不重置选中/滚动
     this.invalidate();
   }
 
@@ -391,7 +491,7 @@ class PeekComponent implements Component, Focusable {
         continue;
       }
       const sel = idx === this.selected;
-      const time = s.time ? s.time.slice(5, 16).replace("T", " ") : "??? ??-??";
+      const time = fmtTime(s.time);
       const cwdTail = s.cwd.replace(/\\/g, "/").split("/").slice(-2).join("/");
       // 关键词模式下显示命中条数
       const hitBadge = kw
@@ -447,7 +547,13 @@ class PeekComponent implements Component, Focusable {
       lines.push("");
     }
     if (kw && !msgs.some((m) => m.text.toLowerCase().includes(kw))) {
-      lines.push(t.fg("warning", "关键词仅命中会话名或目录，对话正文无匹配"));
+      const inTruncated = truncated && s.msgs.some((m) => m.text.toLowerCase().includes(kw));
+      lines.push(
+        t.fg(
+          "warning",
+          inTruncated ? "关键词命中在未显示的更早消息中" : "关键词仅命中会话名或目录，对话正文无匹配",
+        ),
+      );
       lines.push("");
     }
 
@@ -488,9 +594,10 @@ class PeekComponent implements Component, Focusable {
   }
 
   render(width: number): string[] {
-    if (this.cachedWidth === width) return this.cachedLines;
-    const t = this.theme;
     const H = this.bodyHeight();
+    const cacheKey = width * 1000 + H; // 宽或高变化都要重绘
+    if (this.cachedWidth === cacheKey) return this.cachedLines;
+    const t = this.theme;
     const lw = Math.max(26, Math.min(56, Math.floor(width * 0.4)));
     const rw = Math.max(20, width - lw - 3);
 
@@ -532,16 +639,31 @@ class PeekComponent implements Component, Focusable {
       out.push(l + t.fg("borderMuted", " │ ") + padEndVisible(r, rw));
     }
 
-    // 底部提示
+    // 底部提示（重命名/删除确认时切换为对应操作行）
     out.push(t.fg("borderMuted", "─".repeat(width)));
-    out.push(
-      truncateToWidth(
-        t.fg("dim", "↑↓ 选择  PgUp/Dn·^U/^D·⇧↑↓ 滚动  ^N/^P 命中跳转  Tab 范围  Enter 进入  Esc 关闭"),
-        width,
-      ),
-    );
+    if (this.renaming) {
+      const prefix = "✏ 重命名: ";
+      const inputLine = this.renameInput.render(Math.max(10, width - visibleWidth(prefix)))[0] ?? "";
+      out.push(truncateToWidth(t.fg("warning", prefix) + inputLine, width));
+    } else if (this.confirmingDelete) {
+      const s = this.filtered[this.selected];
+      const desc = s ? `${fmtTime(s.time, true)} ${s.first.slice(0, 30)}` : "";
+      out.push(
+        truncateToWidth(
+          t.fg("error", t.bold(`⚠ 删除会话 [${desc}]？按 y 确认，任意其他键取消`)),
+          width,
+        ),
+      );
+    } else {
+      out.push(
+        truncateToWidth(
+          t.fg("dim", "↑↓ 选择  PgUp/Dn·^U/^F·⇧↑↓ 滚动  ^N/^P 命中  Tab 范围  ^D 删除  ^R 重命名  Enter 进入  Esc 关闭"),
+          width,
+        ),
+      );
+    }
 
-    this.cachedWidth = width;
+    this.cachedWidth = cacheKey;
     this.cachedLines = out;
     return out;
   }
@@ -563,30 +685,36 @@ export const __peekTest = { scanSessions, PeekComponent, normPath };
 
 export default function (pi: ExtensionAPI) {
   // ---- 终端启动形式: pi --peek / pi --peek=关键词 / pi --rp ----
+  // 注意：pi 对 boolean 类型 flag 一律把值强转为 true，所以带关键词的形式必须是 string 类型
   pi.registerFlag("peek", {
-    description: "启动时打开会话搜索预览（可用 --peek=关键词 预填）",
-    type: "boolean",
+    description: "启动时打开会话搜索预览并预填关键词（--peek=关键词）",
+    type: "string",
   });
   pi.registerFlag("rp", {
-    description: "--peek 的别名",
+    description: "启动时打开会话搜索预览（不带关键词）",
     type: "boolean",
   });
 
   pi.on("session_start", async (event, ctx) => {
     if (event.reason !== "startup") return; // 只在进程启动时触发，切换会话不重开
-    const flag = pi.getFlag("peek") ?? pi.getFlag("rp");
-    if (!flag) return;
-    const kw = typeof flag === "string" ? flag : "";
+    const peek = pi.getFlag("peek");
+    const rp = pi.getFlag("rp");
+    if (!peek && !rp) return;
+    const kw = typeof peek === "string" ? peek.trim() : "";
     const cmd = `/peek${kw ? ` ${kw}` : ""}`;
 
     // 等 UI 就绪再弹出；agent 忙（如带了初始 prompt）则排队到结束后
     const tryOpen = (attempt: number) => {
-      if (ctx.isIdle()) {
-        pi.sendUserMessage(cmd, { expandPromptTemplates: true });
-      } else if (attempt < 20) {
-        setTimeout(() => tryOpen(attempt + 1), 150);
-      } else {
-        pi.sendUserMessage(cmd, { expandPromptTemplates: true, deliverAs: "followUp" });
+      try {
+        if (ctx.isIdle()) {
+          pi.sendUserMessage(cmd, { expandPromptTemplates: true });
+        } else if (attempt < 20) {
+          setTimeout(() => tryOpen(attempt + 1), 150);
+        } else {
+          pi.sendUserMessage(cmd, { expandPromptTemplates: true, deliverAs: "followUp" });
+        }
+      } catch {
+        // 进程已退出 / 扩展已重载：API 失效，静默放弃（定时器里抛错会变成未捕获异常）
       }
     };
     setTimeout(() => tryOpen(0), 150);
@@ -611,13 +739,76 @@ export default function (pi: ExtensionAPI) {
       const initial = ((args ?? "").trim() || lastQuery) ?? "";
       const picked = await ctx.ui.custom<PeekSession | null>((tui, theme, _kb, done) => {
         const comp = new PeekComponent(all, ctx.cwd, theme, process.stdout.rows || 24, initial);
-        comp.onResume = (s) => done(s);
-        comp.onCancel = () => done(null);
+        comp.requestRender = () => tui.requestRender();
+        comp.onResume = (s) => {
+          lastQuery = comp.getQuery();
+          done(s);
+        };
+        comp.onCancel = () => {
+          lastQuery = comp.getQuery();
+          done(null);
+        };
+        // 删除：与自带 /resume 一致，有 trash 走回收站，没有则直接删文件
+        comp.onDelete = async (s) => {
+          let ok = false;
+          try {
+            const r = await pi.exec("trash", [s.path], { timeout: 4000 });
+            ok = r.code === 0;
+          } catch {
+            ok = false;
+          }
+          if (!ok) {
+            try {
+              rmSync(s.path, { force: true });
+              ok = true;
+            } catch {
+              ok = false;
+            }
+          }
+          ctx.ui.notify(
+            ok ? `已删除会话 ${basename(s.path)}` : "删除会话失败",
+            ok ? "info" : "error",
+          );
+          return ok;
+        };
+        // 重命名：追加 pi 原生 session_info 条目（与 /name、自带选择器 Ctrl+R 同构）
+        comp.onRename = async (s, name) => {
+          let ok = false;
+          try {
+            // parentId 取文件最后一条可解析条目的 id（追加到树叶子）
+            const lines = readFileSync(s.path, "utf8").split("\n");
+            let parentId: string | null = null;
+            for (let i = lines.length - 1; i >= 0; i--) {
+              if (!lines[i]) continue;
+              try {
+                const o = JSON.parse(lines[i]);
+                if (typeof o.id === "string") {
+                  parentId = o.id;
+                  break;
+                }
+              } catch {
+                // 最后一行可能是写了一半的行，继续向上找
+              }
+            }
+            const entry = {
+              type: "session_info",
+              id: randomBytes(4).toString("hex"),
+              parentId,
+              timestamp: new Date().toISOString(),
+              name,
+            };
+            appendFileSync(s.path, JSON.stringify(entry) + "\n", "utf8");
+            ok = true;
+          } catch {
+            ok = false;
+          }
+          ctx.ui.notify(ok ? `已重命名为「${name}」` : "重命名失败", ok ? "info" : "error");
+          return ok;
+        };
         return comp;
       });
 
       if (!picked) return;
-      lastQuery = initial;
 
       const result = await ctx.switchSession(picked.path);
       if (result?.cancelled) {

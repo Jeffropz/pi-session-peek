@@ -15,9 +15,8 @@ pi install git:github.com/Jeffropz/pi-session-peek
 ```
 /peek                 打开
 /peek 关键词          带关键词打开
-pi --peek             启动 pi 时直接打开
+pi --rp               启动 pi 时直接打开
 pi --peek=关键词      启动时带关键词打开
-pi --rp               同 --peek
 ```
 
 搜的是对话正文、会话名和工作目录，不包括工具调用的输入输出。
@@ -27,15 +26,17 @@ pi --rp               同 --peek
 | `Tab` | 当前目录 / 全部项目 |
 | `↑` `↓` | 选会话 |
 | `PgUp` `PgDn` | 预览翻页 |
-| `Ctrl+U` `Ctrl+D` | 预览翻半页 |
+| `Ctrl+U` `Ctrl+F` | 预览翻半页 |
 | `Shift+↑` `Shift+↓` | 预览滚 3 行 |
 | `Ctrl+N` `Ctrl+P` | 下一个 / 上一个命中 |
 | `Enter` | 进入会话 |
+| `Ctrl+R` | 重命名（和 `/name` 效果一样） |
+| `Ctrl+D` | 删除，`y` 确认；有 `trash` 命令就进回收站 |
 | `Esc` | 关闭 |
 
 ## English
 
-Search pi session history in a two-pane picker: type to filter, `Enter` to resume, `Tab` to toggle between the current directory and all projects. Install with `pi install git:github.com/Jeffropz/pi-session-peek`. The UI text is Chinese.
+Search pi session history in a two-pane picker: type to filter, `Enter` to resume, `Ctrl+R` to rename, `Ctrl+D` to delete, `Tab` to toggle between the current directory and all projects. Install with `pi install git:github.com/Jeffropz/pi-session-peek`. The UI text is Chinese.
 
 ## License
 
