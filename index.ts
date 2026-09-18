@@ -9,23 +9,25 @@
  *
  * 按键:
  *   打字                实时过滤（对话正文 + 会话名 + 目录，大小写不敏感）
- *   Tab                 切换范围：当前目录 <-> 全局
+ *                       空格分隔多个词 = AND；@7d / @24h / @2w / @1m 限定最近活动时间
+ *   Tab                 切换范围：当前目录及子目录 <-> 全局
  *   ↑ / ↓               选择会话
  *   PgUp / PgDn         滚动右侧预览（整页）
  *   Ctrl+U / Ctrl+F     滚动右侧预览（半页）
  *   Shift+↑ / Shift+↓   滚动右侧预览（3 行）
  *   Ctrl+N / Ctrl+P     跳到下一个 / 上一个关键词命中处
- *   Ctrl+D              删除选中的会话（y 二次确认；优先 trash 回收站，否则直接删文件）
+ *   Ctrl+D              删除选中的会话（y / Enter 二次确认；优先 trash 回收站，否则直接删文件）
  *   Ctrl+R              重命名选中的会话（追加 pi 原生 session_info 条目，Enter 确认 / Esc 取消）
  *   Enter               进入选中的会话（pi --session 等效）
- *   Esc                 关闭
+ *   Ctrl+O              从选中的会话分叉出新会话继续（原会话不受影响）
+ *   Esc / Ctrl+C        关闭
  *
  * 终端启动时直接打开:
  *   pi --rp                  启动 pi 并打开搜索界面
  *   pi --peek=getHttpValue   启动并预填关键词（--peek 必须带值）
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   Input,
   Key,
@@ -193,18 +195,74 @@ function padEndVisible(s: string, w: number): string {
   return v >= w ? truncateToWidth(s, w) : s + " ".repeat(w - v);
 }
 
+/** 解析后的查询：关键词列表（小写、AND 语义）+ 时间下限 */
+interface ParsedQuery {
+  kws: string[];
+  /** 会话最后活动时间需 >= since（毫秒时间戳），0 表示不限 */
+  since: number;
+  /** 时间过滤的显示标签，如 "近7天" */
+  sinceLabel: string;
+}
+
+const TIME_UNIT_MS: Record<string, number> = { h: 3600e3, d: 86400e3, w: 7 * 86400e3, m: 30 * 86400e3 };
+const TIME_UNIT_LABEL: Record<string, string> = { h: "小时", d: "天", w: "周", m: "个月" };
+
 /**
- * 纯文本关键词高亮（大小写不敏感），在 wrap 之前调用。
+ * 查询语法：空格分隔多个词，全部命中才显示（AND）；@7d / @24h / @2w / @1m 限定最近活动时间。
+ * 关键词统一小写，与 searchText 对齐。
+ */
+function parseQuery(q: string): ParsedQuery {
+  const kws: string[] = [];
+  let since = 0;
+  let sinceLabel = "";
+  for (const tok of q.toLowerCase().split(/\s+/)) {
+    if (!tok) continue;
+    const m = /^@(\d+)([hdwm])$/.exec(tok);
+    if (m) {
+      const n = Number(m[1]);
+      if (n > 0) {
+        since = Date.now() - n * TIME_UNIT_MS[m[2]];
+        sinceLabel = `近${n}${TIME_UNIT_LABEL[m[2]]}`;
+      }
+      continue;
+    }
+    if (!kws.includes(tok)) kws.push(tok);
+  }
+  return { kws, since, sinceLabel };
+}
+
+/** 文本（已小写）是否命中任一关键词 */
+function anyKw(lower: string, kws: string[]): boolean {
+  for (const k of kws) if (lower.includes(k)) return true;
+  return false;
+}
+
+/** 从 i 起找最早出现的关键词；同位置取最长的。返回 [index, length]，未找到 index = -1 */
+function nextMatch(lower: string, kws: string[], i: number): [number, number] {
+  let best = -1;
+  let len = 0;
+  for (const k of kws) {
+    const j = lower.indexOf(k, i);
+    if (j !== -1 && (best === -1 || j < best || (j === best && k.length > len))) {
+      best = j;
+      len = k.length;
+    }
+  }
+  return [best, len];
+}
+
+/**
+ * 纯文本多关键词高亮（大小写不敏感），在 wrap 之前调用。
  * 不用主题的 searchMatchBg：dark/light 主题里它别名到 selectedBg，和左栏选中行同色，
  * 视觉上不明显。改为 warning 前景 + 粗体 + 下划线，任何主题都醒目。
  */
-function highlight(text: string, kw: string, theme: any): string {
-  if (!kw) return text;
+function highlight(text: string, kws: string[], theme: any): string {
+  if (!kws.length) return text;
   const lower = text.toLowerCase();
   let out = "";
   let i = 0;
   for (;;) {
-    const j = lower.indexOf(kw, i);
+    const [j, len] = nextMatch(lower, kws, i);
     if (j === -1) {
       out += text.slice(i);
       break;
@@ -212,11 +270,27 @@ function highlight(text: string, kw: string, theme: any): string {
     out +=
       text.slice(i, j) +
       "\x1b[4m" + // underline on
-      theme.bold(theme.fg("warning", text.slice(j, j + kw.length))) +
+      theme.bold(theme.fg("warning", text.slice(j, j + len))) +
       "\x1b[24m"; // underline off
-    i = j + kw.length;
+    i = j + len;
   }
   return out;
+}
+
+/**
+ * 左栏摘要：第一个命中处前后截一段（未高亮的纯文本）。
+ * 没有任何消息命中（只命中会话名/目录）时返回 undefined，调用方回退到首条消息。
+ */
+function snippet(msgs: PeekMsg[], kws: string[], width: number): string | undefined {
+  if (!kws.length) return undefined;
+  for (const m of msgs) {
+    const flat = m.text.replace(/\s+/g, " ");
+    const [j] = nextMatch(flat.toLowerCase(), kws, 0);
+    if (j === -1) continue;
+    const start = Math.max(0, j - Math.floor(width / 3));
+    return (start > 0 ? "…" : "") + flat.slice(start, start + width);
+  }
+  return undefined;
 }
 
 function wrapLines(text: string, width: number): string[] {
@@ -250,6 +324,8 @@ class PeekComponent implements Component, Focusable {
   private _focused = false;
 
   onResume?: (s: PeekSession) => void;
+  /** 从会话分叉出新会话并进入（由命令层注入） */
+  onFork?: (s: PeekSession) => void;
   onCancel?: () => void;
   /** 删除会话（由命令层注入：优先 trash，失败回退直接删文件）；返回是否成功 */
   onDelete?: (s: PeekSession) => Promise<boolean>;
@@ -265,12 +341,11 @@ class PeekComponent implements Component, Focusable {
     private termRows: number,
     initialQuery: string,
   ) {
-    this.input = new Input({ placeholder: "输入关键词实时过滤（对话正文 / 会话名 / 目录）" });
+    this.input = new Input({ placeholder: "关键词过滤（空格分隔=同时命中；@7d 限定近 7 天）" });
     this.renameInput = new Input({ placeholder: "新会话名（Enter 确认 / Esc 取消，留空取消）" });
     if (initialQuery) this.input.setValue(initialQuery);
-    // 当前目录有会话时默认当前目录，否则全局
-    const cur = normPath(currentCwd);
-    this.scope = all.some((s) => normPath(s.cwd) === cur) ? "current" : "all";
+    // 当前目录树下有会话时默认当前目录，否则全局
+    this.scope = all.some((s) => this.inCurrentTree(s)) ? "current" : "all";
     this.refilter();
   }
 
@@ -288,20 +363,25 @@ class PeekComponent implements Component, Focusable {
     return this.input.getValue().trim();
   }
 
-  private kw(): string {
-    return this.getQuery().toLowerCase();
+  private query(): ParsedQuery {
+    return parseQuery(this.getQuery());
+  }
+
+  /** 会话 cwd 是否等于当前目录或位于其子目录（monorepo / 子目录启动时同项目会话也算） */
+  private inCurrentTree(s: PeekSession): boolean {
+    const cur = normPath(this.currentCwd);
+    const c = normPath(s.cwd);
+    return c === cur || c.startsWith(cur + "/");
   }
 
   /** 重算过滤结果；keepSelection 时尽量保持原选中会话（用于重命名后） */
   private refilter(keepSelection = false): void {
     const prev = keepSelection ? this.filtered[this.selected] : undefined;
-    const kw = this.kw();
+    const { kws, since } = this.query();
     let out = this.all;
-    if (this.scope === "current") {
-      const cur = normPath(this.currentCwd);
-      out = out.filter((s) => normPath(s.cwd) === cur);
-    }
-    if (kw) out = out.filter((s) => s.searchText.includes(kw));
+    if (this.scope === "current") out = out.filter((s) => this.inCurrentTree(s));
+    if (since) out = out.filter((s) => s.mtime >= since);
+    if (kws.length) out = out.filter((s) => kws.every((k) => s.searchText.includes(k)));
     this.filtered = out;
     const idx = prev ? out.indexOf(prev) : -1;
     this.selected = idx >= 0 ? idx : keepSelection ? Math.min(this.selected, Math.max(0, out.length - 1)) : 0;
@@ -337,7 +417,7 @@ class PeekComponent implements Component, Focusable {
         }
         return;
       }
-      if (matchesKey(data, Key.escape)) {
+      if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
         this.renaming = false;
         this.focused = this._focused;
         this.invalidate();
@@ -351,7 +431,7 @@ class PeekComponent implements Component, Focusable {
     if (this.confirmingDelete) {
       this.confirmingDelete = false;
       this.invalidate();
-      if (data === "y" || data === "Y") {
+      if (data === "y" || data === "Y" || matchesKey(data, Key.enter)) {
         const s = this.filtered[this.selected];
         if (s && this.onDelete) {
           void this.onDelete(s).then((ok) => {
@@ -371,7 +451,7 @@ class PeekComponent implements Component, Focusable {
       }
       return;
     }
-    if (matchesKey(data, Key.escape)) {
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
       this.onCancel?.();
       return;
     }
@@ -449,6 +529,11 @@ class PeekComponent implements Component, Focusable {
       if (s) this.onResume?.(s);
       return;
     }
+    if (matchesKey(data, Key.ctrl("o"))) {
+      const s = this.filtered[this.selected];
+      if (s) this.onFork?.(s);
+      return;
+    }
     // 其余按键交给输入框（字符、删除、光标移动、IME 等）
     const before = this.input.getValue();
     this.input.handleInput(data);
@@ -475,7 +560,7 @@ class PeekComponent implements Component, Focusable {
   /** 左栏：会话列表，每项 2 行 */
   private buildList(height: number, lw: number): string[] {
     const t = this.theme;
-    const kw = this.kw();
+    const { kws } = this.query();
     const visible = Math.max(1, Math.floor(height / 2));
     if (this.selected < this.listOffset) this.listOffset = this.selected;
     if (this.selected >= this.listOffset + visible) {
@@ -493,12 +578,16 @@ class PeekComponent implements Component, Focusable {
       const sel = idx === this.selected;
       const time = fmtTime(s.time);
       const cwdTail = s.cwd.replace(/\\/g, "/").split("/").slice(-2).join("/");
-      // 关键词模式下显示命中条数
-      const hitBadge = kw
-        ? ` ·${s.msgs.reduce((n, m) => n + (m.text.toLowerCase().includes(kw) ? 1 : 0), 0)}`
+      // 关键词模式下显示命中条数（含任一关键词的消息数）
+      const hitBadge = kws.length
+        ? ` ·${s.msgs.reduce((n, m) => n + (anyKw(m.text.toLowerCase(), kws) ? 1 : 0), 0)}`
         : "";
       const l1 = `${sel ? "›" : " "} ${time} ${cwdTail}${hitBadge}`;
-      const l2 = `  ${s.first}${s.name ? `  [${s.name}]` : ""}`;
+      // 第二行：有关键词时显示命中片段（高亮），否则显示首条消息
+      const snip = snippet(s.msgs, kws, lw);
+      const l2 = snip !== undefined
+        ? `  ${highlight(snip, kws, t)}`
+        : `  ${s.first}${s.name ? `  [${s.name}]` : ""}`;
       if (sel) {
         rows.push(t.bg("selectedBg", padEndVisible(t.fg("accent", truncateToWidth(l1, lw)), lw)));
         rows.push(t.bg("selectedBg", padEndVisible(truncateToWidth(l2, lw), lw)));
@@ -518,7 +607,7 @@ class PeekComponent implements Component, Focusable {
   private buildPreview(rw: number): void {
     const t = this.theme;
     const s = this.filtered[this.selected];
-    const key = s ? `${s.path}|${this.kw()}|${rw}` : "none";
+    const key = s ? `${s.path}|${this.getQuery()}|${rw}` : "none";
     if (key === this.previewKey) return;
     this.previewKey = key;
     this.matchLines = [];
@@ -538,7 +627,7 @@ class PeekComponent implements Component, Focusable {
     );
     lines.push("");
 
-    const kw = this.kw();
+    const { kws } = this.query();
     const MAX_MSGS = 500;
     const truncated = s.msgs.length > MAX_MSGS;
     const msgs = truncated ? s.msgs.slice(-MAX_MSGS) : s.msgs;
@@ -546,8 +635,8 @@ class PeekComponent implements Component, Focusable {
       lines.push(t.fg("dim", `（会话过长，仅显示最后 ${MAX_MSGS} 条）`));
       lines.push("");
     }
-    if (kw && !msgs.some((m) => m.text.toLowerCase().includes(kw))) {
-      const inTruncated = truncated && s.msgs.some((m) => m.text.toLowerCase().includes(kw));
+    if (kws.length && !msgs.some((m) => anyKw(m.text.toLowerCase(), kws))) {
+      const inTruncated = truncated && s.msgs.some((m) => anyKw(m.text.toLowerCase(), kws));
       lines.push(
         t.fg(
           "warning",
@@ -565,9 +654,9 @@ class PeekComponent implements Component, Focusable {
     };
 
     for (const m of msgs) {
-      const isMatch = kw !== "" && m.text.toLowerCase().includes(kw);
+      const isMatch = kws.length > 0 && anyKw(m.text.toLowerCase(), kws);
       if (isMatch) this.matchLines.push(lines.length); // 记录 label 所在行
-      const body = isMatch ? highlight(m.text, kw, t) : m.text;
+      const body = isMatch ? highlight(m.text, kws, t) : m.text;
 
       if (m.role === "user") {
         lines.push(
@@ -604,11 +693,13 @@ class PeekComponent implements Component, Focusable {
     const out: string[] = [];
 
     // 头部
-    const scopeLabel = this.scope === "all" ? "全局" : "当前目录";
+    const scopeLabel = this.scope === "all" ? "全局" : "当前目录树";
+    const { sinceLabel } = this.query();
     const head =
       t.fg("accent", t.bold("🔍 会话搜索预览")) +
       t.fg("dim", "  范围[Tab]: ") +
       t.fg("warning", scopeLabel) +
+      (sinceLabel ? t.fg("dim", "  时间: ") + t.fg("warning", sinceLabel) : "") +
       t.fg("dim", `  匹配 ${this.filtered.length}/${this.all.length}`);
     out.push(truncateToWidth(head, width));
     out.push(this.input.render(width)[0] ?? "");
@@ -650,14 +741,14 @@ class PeekComponent implements Component, Focusable {
       const desc = s ? `${fmtTime(s.time, true)} ${s.first.slice(0, 30)}` : "";
       out.push(
         truncateToWidth(
-          t.fg("error", t.bold(`⚠ 删除会话 [${desc}]？按 y 确认，任意其他键取消`)),
+          t.fg("error", t.bold(`⚠ 删除会话 [${desc}]？按 y / Enter 确认，任意其他键取消`)),
           width,
         ),
       );
     } else {
       out.push(
         truncateToWidth(
-          t.fg("dim", "↑↓ 选择  PgUp/Dn·^U/^F·⇧↑↓ 滚动  ^N/^P 命中  Tab 范围  ^D 删除  ^R 重命名  Enter 进入  Esc 关闭"),
+          t.fg("dim", "↑↓ 选择  PgUp/Dn·^U/^F·⇧↑↓ 滚动  ^N/^P 命中  Tab 范围  ^D 删除  ^R 改名  ^O 分叉  Enter 进入  Esc/^C 关闭"),
           width,
         ),
       );
@@ -681,7 +772,7 @@ class PeekComponent implements Component, Focusable {
 let lastQuery = ""; // 进程内记住上次搜索词
 
 /** 仅供测试脚本使用，pi 加载器会忽略额外导出 */
-export const __peekTest = { scanSessions, PeekComponent, normPath };
+export const __peekTest = { scanSessions, PeekComponent, normPath, parseQuery, highlight, snippet };
 
 export default function (pi: ExtensionAPI) {
   // ---- 终端启动形式: pi --peek / pi --peek=关键词 / pi --rp ----
@@ -737,12 +828,17 @@ export default function (pi: ExtensionAPI) {
       }
 
       const initial = ((args ?? "").trim() || lastQuery) ?? "";
-      const picked = await ctx.ui.custom<PeekSession | null>((tui, theme, _kb, done) => {
+      type Picked = { s: PeekSession; action: "resume" | "fork" } | null;
+      const picked = await ctx.ui.custom<Picked>((tui, theme, _kb, done) => {
         const comp = new PeekComponent(all, ctx.cwd, theme, process.stdout.rows || 24, initial);
         comp.requestRender = () => tui.requestRender();
         comp.onResume = (s) => {
           lastQuery = comp.getQuery();
-          done(s);
+          done({ s, action: "resume" });
+        };
+        comp.onFork = (s) => {
+          lastQuery = comp.getQuery();
+          done({ s, action: "fork" });
         };
         comp.onCancel = () => {
           lastQuery = comp.getQuery();
@@ -810,7 +906,20 @@ export default function (pi: ExtensionAPI) {
 
       if (!picked) return;
 
-      const result = await ctx.switchSession(picked.path);
+      let target = picked.s.path;
+      if (picked.action === "fork") {
+        // 与 pi --fork 同构：复制全部条目到新文件，header 记录 parentSession，cwd 设为当前目录
+        try {
+          const forked = SessionManager.forkFrom(picked.s.path, ctx.cwd);
+          target = forked.getSessionFile() ?? target;
+          ctx.ui.notify(`已分叉为新会话 ${basename(target)}`, "info");
+        } catch (e) {
+          ctx.ui.notify(`分叉失败：${e instanceof Error ? e.message : String(e)}`, "error");
+          return;
+        }
+      }
+
+      const result = await ctx.switchSession(target);
       if (result?.cancelled) {
         ctx.ui.notify("切换会话已取消", "info");
       }
