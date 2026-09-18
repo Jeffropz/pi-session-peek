@@ -1,0 +1,15 @@
+{
+  "name": "pi-session-peek",
+  "version": "0.1.0",
+  "description": "Search pi session history with a two-pane preview picker: keyword highlight, scrollable full conversation, one-key resume",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "author": "Jeffropz",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
