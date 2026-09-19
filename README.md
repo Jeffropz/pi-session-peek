@@ -64,7 +64,7 @@ In TUI mode, run `/peek` and start typing. Press `Enter` on a session to continu
 | `PgUp` `PgDn` | Scroll preview by a page |
 | `Ctrl+U` `Ctrl+F` | Scroll preview by half a page |
 | `Shift+↑` `Shift+↓` | Scroll preview by three lines |
-| `Ctrl+N` `Ctrl+P` | Next / previous hit |
+| `Ctrl+N` `Ctrl+P` | Next / previous hit line outside the current view; the top-right corner shows `hit k/n` |
 | `Enter` | Resume the session |
 | `Ctrl+O` | Fork the session and open the fork |
 | `Ctrl+R` | Rename. Writes the same `session_info` entry as `/name`. |

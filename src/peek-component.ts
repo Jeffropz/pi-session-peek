@@ -10,7 +10,7 @@ import {
   type MarkdownTheme,
 } from "@earendil-works/pi-tui";
 import { msg } from "./i18n.ts";
-import { anyKw, highlight, parseQuery, snippet, type ParsedQuery } from "./query.ts";
+import { anyKw, highlight, lineHasKw, parseQuery, snippet, type ParsedQuery } from "./query.ts";
 import type { PeekMsg, PeekSession } from "./sessions.ts";
 import { fmtTime, normPath, padEndVisible } from "./text.ts";
 
@@ -25,7 +25,7 @@ export class PeekComponent implements Component, Focusable {
   private previewOffset = 0;
   private previewKey = ""; // 预览缓存的键（会话 + 关键词 + 宽度），置空强制重建
   private previewLines: string[] = [];
-  private matchLines: number[] = []; // 预览里命中消息所在的行，Ctrl+N / Ctrl+P 用
+  private matchLines: number[] = []; // 预览里含关键词的行（升序），Ctrl+N / Ctrl+P 用
   private rendered = new WeakMap<PeekMsg, { w: number; lines: string[] }>(); // 每条消息渲染好的行，按宽度缓存
   private confirmingDelete = false; // Ctrl+D 之后等待确认
   private renaming = false; // Ctrl+R 之后正在输入名字
@@ -250,15 +250,18 @@ export class PeekComponent implements Component, Focusable {
     this.invalidate();
   }
 
-  // 预览里跳到下一个 / 上一个命中，到头了回绕
+  // 预览里跳到当前视口之外的下一个 / 上一个命中行，到头了回绕。同一屏里的多个命中算一处，
+  // 否则一段里连着几行都命中要按好几次才过得去
   private jumpMatch(dir: 1 | -1): void {
     if (!this.matchLines.length) return;
-    const cur = this.previewOffset + 2;
+    const H = this.bodyHeight();
+    const top = this.previewOffset;
+    const bottom = Math.min(top + H, this.previewLines.length) - 1;
     let target: number | undefined;
     if (dir === 1) {
-      target = this.matchLines.find((l) => l > cur) ?? this.matchLines[0];
+      target = this.matchLines.find((l) => l > bottom) ?? this.matchLines[0];
     } else {
-      target = [...this.matchLines].reverse().find((l) => l < cur) ?? this.matchLines[this.matchLines.length - 1];
+      target = [...this.matchLines].reverse().find((l) => l < top) ?? this.matchLines[this.matchLines.length - 1];
     }
     if (target !== undefined) {
       this.previewOffset = Math.max(0, target - 2);
@@ -383,7 +386,7 @@ export class PeekComponent implements Component, Focusable {
 
     for (const m of msgs) {
       const isMatch = kws.length > 0 && anyKw(m.text.toLowerCase(), kws);
-      if (isMatch) this.matchLines.push(lines.length);
+      const head = lines.length;
       if (m.role === "user") {
         lines.push(
           t.bg("userMessageBg", padEndVisible(t.bold(t.fg("accent", fillLabel(msg("you")))), rw)),
@@ -392,7 +395,13 @@ export class PeekComponent implements Component, Focusable {
         lines.push(t.fg("muted", fillLabel(msg("ai"))));
       }
       // 先渲染再高亮：往 markdown 源码里插转义码会把链接、代码块的语法弄坏
-      for (const l of this.renderMsg(m, rw)) lines.push(isMatch ? highlight(l, kws, t) : l);
+      const before = this.matchLines.length;
+      for (const l of this.renderMsg(m, rw)) {
+        if (isMatch && lineHasKw(l, kws)) this.matchLines.push(lines.length);
+        lines.push(isMatch ? highlight(l, kws, t) : l);
+      }
+      // 关键词被折行拆开时哪一行都找不到，退回到消息标题行，别把这条消息漏掉
+      if (isMatch && this.matchLines.length === before) this.matchLines.push(head);
       lines.push("");
     }
 
@@ -435,13 +444,15 @@ export class PeekComponent implements Component, Focusable {
     const maxOff = Math.max(0, this.previewLines.length - H);
     if (this.previewOffset > maxOff) this.previewOffset = maxOff;
     const rightRows = this.previewLines.slice(this.previewOffset, this.previewOffset + H);
-    const scrollInfo =
-      this.previewLines.length > H
-        ? t.fg(
-            "dim",
-            ` (${this.previewOffset + 1}-${Math.min(this.previewOffset + H, this.previewLines.length)}/${this.previewLines.length})`,
-          )
-        : "";
+    // 右上角：有命中时显示"第几处/共几处"（视口内第一个命中的序号），行数多时再加行号范围
+    const end = Math.min(this.previewOffset + H, this.previewLines.length);
+    let info = "";
+    if (this.matchLines.length) {
+      const i = this.matchLines.findIndex((l) => l >= this.previewOffset && l < end);
+      info += msg("hitPos", { k: i >= 0 ? String(i + 1) : "-", n: this.matchLines.length });
+    }
+    if (this.previewLines.length > H) info += ` (${this.previewOffset + 1}-${end}/${this.previewLines.length})`;
+    const scrollInfo = info ? t.fg("dim", info) : "";
 
     for (let i = 0; i < H; i++) {
       const l = leftRows[i] ?? " ".repeat(lw);

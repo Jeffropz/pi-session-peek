@@ -279,6 +279,50 @@ test("有关键词时预览定位到第一个命中，Ctrl+N / Ctrl+P 在命中�
   assert.equal(c.previewOffset, c.matchLines[1] - 2);
 });
 
+test("同一条消息里多处命中，每一行都是跳转点", () => {
+  const body = Array.from({ length: 60 }, (_, i) => (i % 20 === 0 ? `hit line ${i}` : `filler ${i}`)).join("\n\n");
+  const c = make([mk("D:/proj", ["question", body], 1)], "D:/proj", "hit");
+  c.render(120);
+  const lines: string[] = c.previewLines.map(strip);
+  assert.deepEqual(
+    c.matchLines,
+    lines.map((l, i) => (l.includes("hit") ? i : -1)).filter((i) => i >= 0),
+  );
+  assert.equal(c.matchLines.length, 3);
+  c.handleInput("\x0e");
+  assert.equal(c.previewOffset, c.matchLines[1] - 2);
+  c.handleInput("\x0e");
+  assert.equal(c.previewOffset, c.matchLines[2] - 2);
+});
+
+test("Ctrl+N 跳过当前视口里的命中，Ctrl+P 同理", () => {
+  // 第 0、1、2 行连着命中，再隔很远一个
+  const body = ["hit a", "hit b", "hit c", ...Array.from({ length: 50 }, (_, i) => `filler ${i}`), "hit far"].join("\n\n");
+  const c = make([mk("D:/proj", ["question", body], 1)], "D:/proj", "hit");
+  c.render(120);
+  const H = c.bodyHeight();
+  assert.equal(c.matchLines.length, 4);
+  assert.ok(c.matchLines[2] < c.previewOffset + H, "first three hits share the viewport");
+  c.handleInput("\x0e");
+  c.render(120);
+  const maxOff = Math.max(0, c.previewLines.length - H);
+  assert.equal(c.previewOffset, Math.min(c.matchLines[3] - 2, maxOff), "one Ctrl+N goes straight to the far hit");
+  assert.ok(c.matchLines[3] >= c.previewOffset && c.matchLines[3] < c.previewOffset + H, "far hit is on screen");
+  c.handleInput("\x10");
+  c.render(120);
+  assert.equal(c.previewOffset, c.matchLines[2] - 2, "Ctrl+P lands on the nearest hit above the viewport");
+});
+
+test("右上角显示命中序号，随跳转变化", () => {
+  const body = ["hit a", ...Array.from({ length: 50 }, (_, i) => `filler ${i}`), "hit far"].join("\n\n");
+  const c = make([mk("D:/proj", ["question", body], 1)], "D:/proj", "hit");
+  let top = strip(c.render(120)[3]);
+  assert.ok(top.includes("命中 1/2"), top);
+  c.handleInput("\x0e");
+  top = strip(c.render(120)[3]);
+  assert.ok(top.includes("命中 2/2"), top);
+});
+
 test("关键词只命中会话名时预览给出提示", () => {
   const c = make(fixture(), "D:/nowhere", "named-x");
   const lines = c.render(120).map(strip).join("\n");
@@ -346,7 +390,10 @@ test("预览的关键词高亮在渲染之后叠加，不破坏表格和链接",
   const link = raw.find((l) => strip(l).includes("文档"))!;
   assert.ok(link.includes("\x1b]8;;https://example.com/doc"), "hyperlink survives");
   assert.ok(!strip(link).includes("]("), "link syntax is consumed");
-  assert.ok(c.matchLines.length === 1);
+  // 命中按行记：正好是去掉样式后含关键词的那些行
+  const expect = raw.map((l, i) => (strip(l).toLowerCase().includes("http") ? i : -1)).filter((i) => i >= 0);
+  assert.ok(expect.length > 1);
+  assert.deepEqual(c.matchLines, expect);
 });
 
 test("同一宽度下每条消息只渲染一次，换关键词也不重来", () => {

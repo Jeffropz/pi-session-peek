@@ -96,6 +96,11 @@ function applySgr(st: Sgr, seq: string): void {
   }
 }
 
+// 渲染后的一行（可带 ANSI）里有没有关键词，预览按行记命中用
+export function lineHasKw(line: string, kws: string[]): boolean {
+  return kws.length > 0 && anyKw(line.replace(ESC_RE, "").toLowerCase(), kws);
+}
+
 // 在一行文字里高亮关键词，返回带 ANSI 的字符串。
 // 输入可以是已经渲染过、带样式的行：转义序列不参与匹配也不会被切断；高亮结束时把原来的
 // 前景色 / 粗体 / 下划线恢复回去，所以放在标题、链接等样式里面也不会把后面的文字弄丢样式。

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Ctrl+N / Ctrl+P now jump between hit lines instead of hit messages. Several hits inside one long reply used to collapse into a single stop, so the preview appeared not to move. Hits already on screen are skipped, and the top-right corner shows the current hit as `hit k/n`.
+
 ## 0.2.0
 
 - The preview renders messages with pi's own Markdown renderer: headings, bold, inline code, syntax-highlighted code blocks, tables with borders and cell wrapping, lists, quotes and links now look the same as in the main transcript.
