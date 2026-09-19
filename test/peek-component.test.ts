@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { setLang } from "../src/i18n.ts";
 import { PeekComponent } from "../src/peek-component.ts";
 import type { PeekSession } from "../src/sessions.ts";
@@ -295,5 +296,31 @@ test("每行宽度不超过给定宽度", () => {
   const c = make(fixture(), "D:/nowhere", "alpha");
   for (const w of [80, 100, 140]) {
     for (const line of c.render(w)) assert.ok(strip(line).length <= w, `width ${w}: ${strip(line).length}`);
+  }
+});
+
+test("主体高度为奇数时，最后一行的分隔线仍在同一列（右栏不会顶到左边）", () => {
+  const long = mk("D:/proj", Array.from({ length: 80 }, (_, i) => `line ${i} ${"x".repeat(60)}`), 1);
+  const saved = process.stdout.rows;
+  Object.defineProperty(process.stdout, "rows", { value: undefined, configurable: true, writable: true });
+  try {
+    for (const termRows of [35, 36]) {
+      const c: any = new PeekComponent([long], "D:/proj", theme, termRows, "");
+      c.requestRender = () => {};
+      const H = c.bodyHeight();
+      assert.equal(H, termRows - 12);
+      const width = 120;
+      c.render(width);
+      c.handleInput(KEY.cu);
+      c.handleInput(KEY.cu);
+      const lines = c.render(width).map(strip);
+      const body = lines.slice(3, 3 + H);
+      assert.equal(body.length, H);
+      const cols = new Set(body.map((l: string) => l.indexOf("│")));
+      assert.equal(cols.size, 1, `separator columns: ${[...cols].join(",")} (H=${H})`);
+      assert.ok(body.every((l: string) => visibleWidth(l) === width), "every body row is full width");
+    }
+  } finally {
+    Object.defineProperty(process.stdout, "rows", { value: saved, configurable: true, writable: true });
   }
 });

@@ -301,6 +301,8 @@ export class PeekComponent implements Component, Focusable {
         rows.push(padEndVisible(t.fg("dim", truncateToWidth(l2, lw)), lw));
       }
     }
+    // 每项两行，height 是奇数时会少一行，补空行，否则最后一行右栏会顶到左边
+    while (rows.length < height) rows.push(" ".repeat(lw));
     return rows.slice(0, height);
   }
 
@@ -420,7 +422,7 @@ export class PeekComponent implements Component, Focusable {
         : "";
 
     for (let i = 0; i < H; i++) {
-      const l = leftRows[i] ?? "";
+      const l = leftRows[i] ?? " ".repeat(lw);
       let r = rightRows[i] ?? "";
       if (i === 0 && scrollInfo) {
         r = truncateToWidth(r, Math.max(0, rw - visibleWidth(scrollInfo))) + scrollInfo;
