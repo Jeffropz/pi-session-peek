@@ -32,7 +32,8 @@
   "pi": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/Jeffropz/pi-session-peek/main/docs/screenshot.png"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
