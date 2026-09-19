@@ -82,10 +82,22 @@ The filter is case-insensitive and matches anywhere in the text.
 
 The search index holds user and assistant messages, the session name and the working directory. It does not hold tool call arguments or tool results.
 
+## 🌐 Language
+
+The interface follows your system language: Chinese on `zh-*` locales, English everywhere else. Detection order is `PI_SESSION_PEEK_LANG`, then `LC_ALL` / `LC_MESSAGES` / `LANG`, then the OS locale.
+
+Force a language:
+
+```bash
+PI_SESSION_PEEK_LANG=en pi
+PI_SESSION_PEEK_LANG=zh pi
+```
+
+On Windows PowerShell: `$env:PI_SESSION_PEEK_LANG = "en"` before starting pi. The language is read once when the extension loads, so change it before starting pi or run `/reload`.
+
 ## 🚧 Limitations
 
 - TUI mode only.
-- The interface text is Chinese.
 - No mouse support. Pi only enables mouse input in its experimental fullscreen mode, and this picker does not handle it yet.
 - The preview shows the last 500 messages of very long sessions. Hits in earlier messages are still counted and announced.
 - `pi --peek` without a value is rejected by pi at startup. Use `pi --rp` to open without a keyword.
@@ -100,6 +112,7 @@ pi-session-peek/
 │   ├── peek-component.ts    # The two-pane TUI component
 │   ├── sessions.ts          # Scans and parses session JSONL, rename / delete helpers
 │   ├── query.ts             # Query parsing, highlighting, hit snippets
+│   ├── i18n.ts              # Chinese / English UI strings and locale detection
 │   └── text.ts              # Path, time and width helpers
 ├── scripts/screenshot.mjs   # Optional: renders a synthetic screenshot from component output
 └── test/                    # node:test suites

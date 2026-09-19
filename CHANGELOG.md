@@ -10,3 +10,4 @@ First release.
 - Enter resumes, Ctrl+O forks, Ctrl+R renames, Ctrl+D deletes (moves to trash when the `trash` CLI is available).
 - Tab toggles between the current directory tree and all projects.
 - `/peek [keyword]` command, `--rp` and `--peek=<keyword>` startup flags.
+- Chinese and English interface, following the system locale. Override with `PI_SESSION_PEEK_LANG=zh|en`.

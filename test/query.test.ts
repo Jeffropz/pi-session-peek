@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { setLang } from "../src/i18n.ts";
 import { anyKw, highlight, parseQuery, snippet } from "../src/query.ts";
+
+setLang("zh");
 
 const theme = {
   fg: (_c: string, s: string) => `<${s}>`,

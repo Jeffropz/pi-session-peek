@@ -1,5 +1,6 @@
 import { SessionManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { basename } from "node:path";
+import { msg } from "./src/i18n.ts";
 import { PeekComponent } from "./src/peek-component.ts";
 import { deleteSession, renameSession, scanSessions, type PeekSession } from "./src/sessions.ts";
 
@@ -10,11 +11,11 @@ let lastQuery = ""; // 进程内记住上次搜索词
 export default function (pi: ExtensionAPI) {
   // pi 会把 boolean flag 的值一律强转成 true，所以带关键词的形式只能是 string 类型
   pi.registerFlag("peek", {
-    description: "启动时打开会话搜索预览并预填关键词（--peek=关键词）",
+    description: msg("flagPeek"),
     type: "string",
   });
   pi.registerFlag("rp", {
-    description: "启动时打开会话搜索预览（不带关键词）",
+    description: msg("flagRp"),
     type: "boolean",
   });
 
@@ -44,10 +45,10 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("peek", {
-    description: "搜索历史会话：左右分栏预览、关键词高亮，Enter 进入对话",
+    description: msg("cmdDesc"),
     handler: async (args, ctx) => {
       if (ctx.mode !== "tui") {
-        ctx.ui.notify("/peek 需要在交互模式（TUI）下使用", "error");
+        ctx.ui.notify(msg("needTui"), "error");
         return;
       }
 
@@ -55,7 +56,7 @@ export default function (pi: ExtensionAPI) {
       const currentFile = ctx.sessionManager.getSessionFile();
       const all = scanSessions().filter((s) => s.path !== currentFile);
       if (!all.length) {
-        ctx.ui.notify("没有找到历史会话", "info");
+        ctx.ui.notify(msg("noSessions"), "info");
         return;
       }
 
@@ -78,7 +79,7 @@ export default function (pi: ExtensionAPI) {
         };
         comp.onDelete = async (s) => {
           const ok = await deleteSession(s.path, (cmd, a) => pi.exec(cmd, a, { timeout: 4000 }));
-          ctx.ui.notify(ok ? `已删除会话 ${basename(s.path)}` : "删除会话失败", ok ? "info" : "error");
+          ctx.ui.notify(ok ? msg("deleted", { file: basename(s.path) }) : msg("deleteFailed"), ok ? "info" : "error");
           return ok;
         };
         comp.onRename = async (s, name) => {
@@ -88,7 +89,7 @@ export default function (pi: ExtensionAPI) {
           } catch {
             ok = false;
           }
-          ctx.ui.notify(ok ? `已重命名为「${name}」` : "重命名失败", ok ? "info" : "error");
+          ctx.ui.notify(ok ? msg("renamed", { name }) : msg("renameFailed"), ok ? "info" : "error");
           return ok;
         };
         return comp;
@@ -102,16 +103,16 @@ export default function (pi: ExtensionAPI) {
         try {
           const forked = SessionManager.forkFrom(picked.s.path, ctx.cwd);
           target = forked.getSessionFile() ?? target;
-          ctx.ui.notify(`已分叉为新会话 ${basename(target)}`, "info");
+          ctx.ui.notify(msg("forked", { file: basename(target) }), "info");
         } catch (e) {
-          ctx.ui.notify(`分叉失败：${e instanceof Error ? e.message : String(e)}`, "error");
+          ctx.ui.notify(msg("forkFailed", { error: e instanceof Error ? e.message : String(e) }), "error");
           return;
         }
       }
 
       const result = await ctx.switchSession(target);
       if (result?.cancelled) {
-        ctx.ui.notify("切换会话已取消", "info");
+        ctx.ui.notify(msg("switchCancelled"), "info");
       }
     },
   });

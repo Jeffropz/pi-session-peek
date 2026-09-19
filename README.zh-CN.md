@@ -82,6 +82,19 @@ pi 扩展以你的用户权限运行，只装信得过的包。
 
 索引里有用户和助手的消息、会话名、工作目录。没有工具调用的参数和结果。
 
+## 🌐 界面语言
+
+跟随系统语言：区域是 `zh-*` 显示中文，其他显示英文。判断顺序是 `PI_SESSION_PEEK_LANG`，然后 `LC_ALL` / `LC_MESSAGES` / `LANG`，最后是操作系统的区域设置。
+
+强制指定：
+
+```bash
+PI_SESSION_PEEK_LANG=en pi
+PI_SESSION_PEEK_LANG=zh pi
+```
+
+Windows PowerShell 里先执行 `$env:PI_SESSION_PEEK_LANG = "en"` 再启动 pi。语言在扩展加载时读一次，改了之后要重启 pi 或 `/reload`。
+
 ## 🚧 限制
 
 - 只支持 TUI 模式。
@@ -99,6 +112,7 @@ pi-session-peek/
 │   ├── peek-component.ts    # 双栏 TUI 组件
 │   ├── sessions.ts          # 扫描解析会话 JSONL，重命名 / 删除
 │   ├── query.ts             # 查询解析、高亮、命中片段
+│   ├── i18n.ts              # 中英文界面文案和语言检测
 │   └── text.ts              # 路径、时间、宽度工具
 ├── scripts/screenshot.mjs   # 可选：用组件渲染输出生成一张合成截图
 └── test/                    # node:test 测试

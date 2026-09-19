@@ -7,6 +7,7 @@ import {
   type Component,
   type Focusable,
 } from "@earendil-works/pi-tui";
+import { msg } from "./i18n.ts";
 import { anyKw, highlight, parseQuery, snippet, type ParsedQuery } from "./query.ts";
 import type { PeekSession } from "./sessions.ts";
 import { fmtTime, normPath, padEndVisible, wrapLines } from "./text.ts";
@@ -45,8 +46,8 @@ export class PeekComponent implements Component, Focusable {
     private termRows: number,
     initialQuery: string,
   ) {
-    this.input = new Input({ placeholder: "关键词过滤（空格分隔=同时命中；@7d 限定近 7 天）" });
-    this.renameInput = new Input({ placeholder: "新会话名（Enter 确认 / Esc 取消，留空取消）" });
+    this.input = new Input({ placeholder: msg("searchPlaceholder") });
+    this.renameInput = new Input({ placeholder: msg("renamePlaceholder") });
     if (initialQuery) this.input.setValue(initialQuery);
     // 当前目录树下有会话就默认当前目录，否则全局
     this.scope = all.some((s) => this.inCurrentTree(s)) ? "current" : "all";
@@ -313,7 +314,7 @@ export class PeekComponent implements Component, Focusable {
     this.matchLines = [];
 
     if (!s) {
-      this.previewLines = [t.fg("dim", "没有匹配的会话")];
+      this.previewLines = [t.fg("dim", msg("noMatch"))];
       this.previewOffset = 0;
       return;
     }
@@ -321,7 +322,7 @@ export class PeekComponent implements Component, Focusable {
     const lines: string[] = [];
     lines.push(
       truncateToWidth(
-        t.fg("dim", `${s.cwd} • ${s.msgs.length} 条消息${s.name ? " • " + s.name : ""}`),
+        t.fg("dim", `${s.cwd} • ${msg("msgCount", { n: s.msgs.length })}${s.name ? " • " + s.name : ""}`),
         rw,
       ),
     );
@@ -332,7 +333,7 @@ export class PeekComponent implements Component, Focusable {
     const truncated = s.msgs.length > MAX_MSGS;
     const msgs = truncated ? s.msgs.slice(-MAX_MSGS) : s.msgs;
     if (truncated) {
-      lines.push(t.fg("dim", `（会话过长，仅显示最后 ${MAX_MSGS} 条）`));
+      lines.push(t.fg("dim", msg("truncated", { n: MAX_MSGS })));
       lines.push("");
     }
     if (kws.length && !msgs.some((m) => anyKw(m.text.toLowerCase(), kws))) {
@@ -340,7 +341,7 @@ export class PeekComponent implements Component, Focusable {
       lines.push(
         t.fg(
           "warning",
-          inTruncated ? "关键词命中在未显示的更早消息中" : "关键词仅命中会话名或目录，对话正文无匹配",
+          inTruncated ? msg("hitInTruncated") : msg("hitOnlyMeta"),
         ),
       );
       lines.push("");
@@ -359,13 +360,13 @@ export class PeekComponent implements Component, Focusable {
 
       if (m.role === "user") {
         lines.push(
-          t.bg("userMessageBg", padEndVisible(t.bold(t.fg("accent", fillLabel("👤 你"))), rw)),
+          t.bg("userMessageBg", padEndVisible(t.bold(t.fg("accent", fillLabel(msg("you")))), rw)),
         );
         for (const wl of wrapLines(body, rw - 2)) {
           lines.push(t.bg("userMessageBg", padEndVisible(" " + wl, rw)));
         }
       } else {
-        lines.push(t.fg("muted", fillLabel("🤖 AI")));
+        lines.push(t.fg("muted", fillLabel(msg("ai"))));
         for (const wl of wrapLines(body, rw - 2)) lines.push(" " + wl);
       }
       lines.push("");
@@ -391,14 +392,14 @@ export class PeekComponent implements Component, Focusable {
     const out: string[] = [];
 
     // 头部：标题、范围、时间过滤、匹配数，然后是搜索框
-    const scopeLabel = this.scope === "all" ? "全局" : "当前目录树";
+    const scopeLabel = this.scope === "all" ? msg("scopeAll") : msg("scopeCurrent");
     const { sinceLabel } = this.query();
     const head =
-      t.fg("accent", t.bold("🔍 会话搜索预览")) +
-      t.fg("dim", "  范围[Tab]: ") +
+      t.fg("accent", t.bold(msg("title"))) +
+      t.fg("dim", msg("scopeLabel")) +
       t.fg("warning", scopeLabel) +
-      (sinceLabel ? t.fg("dim", "  时间: ") + t.fg("warning", sinceLabel) : "") +
-      t.fg("dim", `  匹配 ${this.filtered.length}/${this.all.length}`);
+      (sinceLabel ? t.fg("dim", msg("timeLabel")) + t.fg("warning", sinceLabel) : "") +
+      t.fg("dim", msg("matchCount", { n: this.filtered.length, total: this.all.length }));
     out.push(truncateToWidth(head, width));
     out.push(this.input.render(width)[0] ?? "");
     out.push(t.fg("borderMuted", "─".repeat(width)));
@@ -431,7 +432,7 @@ export class PeekComponent implements Component, Focusable {
     // 底部：重命名和删除确认时换成对应的操作行
     out.push(t.fg("borderMuted", "─".repeat(width)));
     if (this.renaming) {
-      const prefix = "✏ 重命名: ";
+      const prefix = msg("renamePrefix");
       const inputLine = this.renameInput.render(Math.max(10, width - visibleWidth(prefix)))[0] ?? "";
       out.push(truncateToWidth(t.fg("warning", prefix) + inputLine, width));
     } else if (this.confirmingDelete) {
@@ -439,14 +440,14 @@ export class PeekComponent implements Component, Focusable {
       const desc = s ? `${fmtTime(s.time, true)} ${s.first.slice(0, 30)}` : "";
       out.push(
         truncateToWidth(
-          t.fg("error", t.bold(`⚠ 删除会话 [${desc}]？按 y / Enter 确认，任意其他键取消`)),
+          t.fg("error", t.bold(msg("confirmDelete", { desc }))),
           width,
         ),
       );
     } else {
       out.push(
         truncateToWidth(
-          t.fg("dim", "↑↓ 选择  PgUp/Dn·^U/^F·⇧↑↓ 滚动  ^N/^P 命中  Tab 范围  ^D 删除  ^R 改名  ^O 分叉  Enter 进入  Esc/^C 关闭"),
+          t.fg("dim", msg("footer")),
           width,
         ),
       );

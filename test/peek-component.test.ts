@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { setLang } from "../src/i18n.ts";
 import { PeekComponent } from "../src/peek-component.ts";
 import type { PeekSession } from "../src/sessions.ts";
+
+setLang("zh");
 
 const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s };
 const strip = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");

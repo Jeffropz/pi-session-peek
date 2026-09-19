@@ -1,3 +1,4 @@
+import { msg, type MsgKey } from "./i18n.ts";
 import type { PeekMsg } from "./sessions.ts";
 
 // 搜索框语法：空格分隔多个词，都要命中；@7d / @24h / @2w / @1m 限定最近活动时间
@@ -9,7 +10,7 @@ export interface ParsedQuery {
 }
 
 const TIME_UNIT_MS: Record<string, number> = { h: 3600e3, d: 86400e3, w: 7 * 86400e3, m: 30 * 86400e3 };
-const TIME_UNIT_LABEL: Record<string, string> = { h: "小时", d: "天", w: "周", m: "个月" };
+const TIME_UNIT_LABEL: Record<string, MsgKey> = { h: "unitH", d: "unitD", w: "unitW", m: "unitM" };
 
 // "foo bar @7d" → kws = [foo, bar]，since = 7 天前
 export function parseQuery(q: string): ParsedQuery {
@@ -23,7 +24,7 @@ export function parseQuery(q: string): ParsedQuery {
       const n = Number(m[1]);
       if (n > 0) {
         since = Date.now() - n * TIME_UNIT_MS[m[2]];
-        sinceLabel = `近${n}${TIME_UNIT_LABEL[m[2]]}`;
+        sinceLabel = msg("since", { n, unit: msg(TIME_UNIT_LABEL[m[2]]) });
       }
       continue;
     }
