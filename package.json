@@ -7,6 +7,10 @@
   ],
   "license": "MIT",
   "author": "Jeffropz",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Jeffropz/pi-session-peek.git"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
