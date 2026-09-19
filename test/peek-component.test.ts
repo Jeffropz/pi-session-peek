@@ -4,11 +4,10 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { setLang } from "../src/i18n.ts";
 import { PeekComponent } from "../src/peek-component.ts";
 import type { PeekSession } from "../src/sessions.ts";
+import { mdTheme, strip, theme } from "./helpers.ts";
 
 setLang("zh");
 
-const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s };
-const strip = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
 const KEY = { enter: "\r", tab: "\t", up: "\x1b[A", down: "\x1b[B", bs: "\x7f", esc: "\x1b", cc: "\x03", cd: "\x04", cf: "\x06", co: "\x0f", cr: "\x12", cu: "\x15" };
@@ -37,7 +36,7 @@ function fixture() {
 }
 
 function make(all = fixture(), cwd = "d:/PROJ", initial = "") {
-  const c: any = new PeekComponent(all, cwd, theme, 40, initial);
+  const c: any = new PeekComponent(all, cwd, theme, mdTheme, 40, initial);
   c.requestRender = () => {};
   return c;
 }
@@ -299,13 +298,76 @@ test("每行宽度不超过给定宽度", () => {
   }
 });
 
+const MD_REPLY = [
+  "问题在 **getHttpValue**，见 [文档](https://example.com/doc)。",
+  "",
+  "```ts",
+  "const token = getHttpValue(res.headers);",
+  "```",
+  "",
+  "| 文件 | 改动 |",
+  "| --- | --- |",
+  "| src/utils/http.ts | 读取移到 response 事件之后，并加了失败重试 |",
+  "| src/views/login.vue | 换成同一个封装 |",
+  "",
+  "- 第一点",
+  "- 第二点",
+].join("\n");
+
+function mdFixture() {
+  return [mk("D:/proj", ["帮我看下 token 为什么是 undefined", MD_REPLY], 1)];
+}
+
+test("预览用 Markdown 渲染：表格画出边框且不超宽，代码块和列表保持结构", () => {
+  const c = make(mdFixture(), "D:/proj");
+  c.handleInput(KEY.cu);
+  c.handleInput(KEY.cu);
+  const width = 110;
+  const lines = c.render(width).map(strip);
+  const body = lines.slice(3, 3 + c.bodyHeight());
+  assert.ok(body.every((l: string) => visibleWidth(l) === width), "every body row is full width");
+  const right = c.previewLines.map(strip);
+  assert.ok(right.some((l: string) => l.startsWith(" ┌") && l.includes("┬")), "table top border");
+  assert.ok(right.some((l: string) => /^ │ 文件\s+│ 改动\s+│/.test(l)), "table header row");
+  assert.ok(right.some((l: string) => l.includes("src/utils/http.ts") && l.includes("│")), "table cell");
+  assert.ok(right.some((l: string) => l.trim() === "```ts"), "code fence");
+  assert.ok(right.some((l: string) => l.trim() === "- 第一点"), "list item");
+  assert.ok(!right.some((l: string) => l.includes("**")), "bold markers are consumed");
+  assert.ok(!right.some((l: string) => l.includes("](")), "link syntax is consumed");
+});
+
+test("预览的关键词高亮在渲染之后叠加，不破坏表格和链接", () => {
+  const c = make(mdFixture(), "D:/proj", "http");
+  c.render(110);
+  const raw: string[] = c.previewLines;
+  const cell = raw.find((l) => strip(l).includes("src/utils/http.ts"))!;
+  assert.ok(cell.includes("\x1b[1m\x1b[4m"), "keyword inside a table cell is highlighted");
+  assert.ok(strip(cell).includes("│"), "cell borders survive");
+  const link = raw.find((l) => strip(l).includes("文档"))!;
+  assert.ok(link.includes("\x1b]8;;https://example.com/doc"), "hyperlink survives");
+  assert.ok(!strip(link).includes("]("), "link syntax is consumed");
+  assert.ok(c.matchLines.length === 1);
+});
+
+test("同一宽度下每条消息只渲染一次，换关键词也不重来", () => {
+  const all = mdFixture();
+  const c = make(all, "D:/proj");
+  c.render(110);
+  const first = c.rendered.get(all[0].msgs[1]).lines;
+  type(c, "http");
+  c.render(110);
+  assert.equal(c.rendered.get(all[0].msgs[1]).lines, first);
+  c.render(120);
+  assert.notEqual(c.rendered.get(all[0].msgs[1]).lines, first);
+});
+
 test("主体高度为奇数时，最后一行的分隔线仍在同一列（右栏不会顶到左边）", () => {
   const long = mk("D:/proj", Array.from({ length: 80 }, (_, i) => `line ${i} ${"x".repeat(60)}`), 1);
   const saved = process.stdout.rows;
   Object.defineProperty(process.stdout, "rows", { value: undefined, configurable: true, writable: true });
   try {
     for (const termRows of [35, 36]) {
-      const c: any = new PeekComponent([long], "D:/proj", theme, termRows, "");
+      const c: any = new PeekComponent([long], "D:/proj", theme, mdTheme, termRows, "");
       c.requestRender = () => {};
       const H = c.bodyHeight();
       assert.equal(H, termRows - 12);

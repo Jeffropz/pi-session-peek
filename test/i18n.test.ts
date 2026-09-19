@@ -3,9 +3,7 @@ import { test } from "node:test";
 import { detectLang, getLang, messages, msg, setLang } from "../src/i18n.ts";
 import { PeekComponent } from "../src/peek-component.ts";
 import { parseQuery } from "../src/query.ts";
-
-const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s };
-const strip = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");
+import { mdTheme, strip, theme } from "./helpers.ts";
 
 test("中英文的键和占位符一一对应", () => {
   const zhKeys = Object.keys(messages.zh).sort();
@@ -70,7 +68,7 @@ test("英文界面：头部、时间标签、底部提示、预览标签都换�
       msgs: [{ role: "user" as const, text: "hello" }, { role: "assistant" as const, text: "world" }],
       searchText: "hello world d:/x", mtime: Date.now(),
     };
-    const c: any = new PeekComponent([s], "D:/x", theme, 40, "hello @7d");
+    const c: any = new PeekComponent([s], "D:/x", theme, mdTheme, 40, "hello @7d");
     const lines = c.render(120).map(strip);
     assert.ok(lines[0].includes("Session search"));
     assert.ok(lines[0].includes("current dir tree"));

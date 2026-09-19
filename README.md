@@ -11,6 +11,7 @@ Search your [pi](https://pi.dev) session history by what was actually said, read
 ## ✨ Features
 
 - Opens a two-pane picker with `/peek` or `/peek <keyword>`: sessions on the left, the full conversation on the right.
+- Renders the conversation with pi's own Markdown renderer, so headings, code blocks with syntax highlighting, tables and lists look the same as in the main transcript.
 - Filters as you type across conversation text, session name and working directory. Tool call arguments and results are excluded, so a keyword only matches sessions that actually discussed it.
 - Requires every space-separated keyword to match, and shows a snippet around the first hit in the list.
 - Limits results to recently active sessions with `@7d`, `@24h`, `@2w` or `@1m`.

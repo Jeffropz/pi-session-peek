@@ -1,4 +1,4 @@
-import { SessionManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getMarkdownTheme, SessionManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { basename } from "node:path";
 import { msg } from "./src/i18n.ts";
 import { PeekComponent } from "./src/peek-component.ts";
@@ -63,7 +63,7 @@ export default function (pi: ExtensionAPI) {
       const initial = ((args ?? "").trim() || lastQuery) ?? "";
       type Picked = { s: PeekSession; action: "resume" | "fork" } | null;
       const picked = await ctx.ui.custom<Picked>((tui, theme, _kb, done) => {
-        const comp = new PeekComponent(all, ctx.cwd, theme, process.stdout.rows || 24, initial);
+        const comp = new PeekComponent(all, ctx.cwd, theme, getMarkdownTheme(), process.stdout.rows || 24, initial);
         comp.requestRender = () => tui.requestRender();
         comp.onResume = (s) => {
           lastQuery = comp.getQuery();

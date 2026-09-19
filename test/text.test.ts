@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { fmtTime, normPath, padEndVisible, wrapLines } from "../src/text.ts";
+import { fmtTime, normPath, padEndVisible } from "../src/text.ts";
 
 test("normPath: 反斜杠、尾部斜杠、大小写", () => {
   const bs = String.fromCharCode(92);
@@ -41,11 +41,4 @@ test("padEndVisible: 超宽时按显示宽度截断", () => {
   const out = padEndVisible("abcdefgh", 4);
   assert.equal(visibleWidth(out), 4);
   assert.ok(out.startsWith("a"));
-});
-
-test("wrapLines: 按行拆再按宽度折，空行保留", () => {
-  assert.deepEqual(wrapLines("a\n\nb", 10), ["a", "", "b"]);
-  const long = wrapLines("word ".repeat(10).trim(), 12);
-  assert.ok(long.length > 1);
-  assert.ok(long.every((l) => l.length <= 12));
 });

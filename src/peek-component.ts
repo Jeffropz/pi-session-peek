@@ -1,16 +1,18 @@
 import {
   Input,
   Key,
+  Markdown,
   matchesKey,
   truncateToWidth,
   visibleWidth,
   type Component,
   type Focusable,
+  type MarkdownTheme,
 } from "@earendil-works/pi-tui";
 import { msg } from "./i18n.ts";
 import { anyKw, highlight, parseQuery, snippet, type ParsedQuery } from "./query.ts";
-import type { PeekSession } from "./sessions.ts";
-import { fmtTime, normPath, padEndVisible, wrapLines } from "./text.ts";
+import type { PeekMsg, PeekSession } from "./sessions.ts";
+import { fmtTime, normPath, padEndVisible } from "./text.ts";
 
 // 双栏选择器。文件操作（删除 / 重命名 / 分叉）不在这里做，由 index.ts 通过回调注入
 
@@ -24,6 +26,7 @@ export class PeekComponent implements Component, Focusable {
   private previewKey = ""; // 预览缓存的键（会话 + 关键词 + 宽度），置空强制重建
   private previewLines: string[] = [];
   private matchLines: number[] = []; // 预览里命中消息所在的行，Ctrl+N / Ctrl+P 用
+  private rendered = new WeakMap<PeekMsg, { w: number; lines: string[] }>(); // 每条消息渲染好的行，按宽度缓存
   private confirmingDelete = false; // Ctrl+D 之后等待确认
   private renaming = false; // Ctrl+R 之后正在输入名字
   private renameInput: Input;
@@ -43,6 +46,7 @@ export class PeekComponent implements Component, Focusable {
     private all: PeekSession[],
     private currentCwd: string,
     private theme: any,
+    private mdTheme: MarkdownTheme,
     private termRows: number,
     initialQuery: string,
   ) {
@@ -306,6 +310,28 @@ export class PeekComponent implements Component, Focusable {
     return rows.slice(0, height);
   }
 
+  // 用 pi 自己的 Markdown 组件渲染一条消息，和主界面里的对话长得一样；参数照抄 pi 的
+  // user-message / assistant-message 组件。渲染比较贵，按消息和宽度缓存，换关键词时不用重来
+  private renderMsg(m: PeekMsg, rw: number): string[] {
+    const hit = this.rendered.get(m);
+    if (hit && hit.w === rw) return hit.lines;
+    const t = this.theme;
+    const md =
+      m.role === "user"
+        ? new Markdown(
+            m.text,
+            1,
+            0,
+            this.mdTheme,
+            { color: (s) => t.fg("userMessageText", s), bgColor: (s) => t.bg("userMessageBg", s) },
+            { preserveOrderedListMarkers: true, preserveBackslashEscapes: true },
+          )
+        : new Markdown(m.text, 1, 0, this.mdTheme);
+    const lines = md.render(rw);
+    this.rendered.set(m, { w: rw, lines });
+    return lines;
+  }
+
   // 右栏。有关键词时滚到第一个命中处，没有时滚到底部看最新消息
   private buildPreview(rw: number): void {
     const t = this.theme;
@@ -358,19 +384,15 @@ export class PeekComponent implements Component, Focusable {
     for (const m of msgs) {
       const isMatch = kws.length > 0 && anyKw(m.text.toLowerCase(), kws);
       if (isMatch) this.matchLines.push(lines.length);
-      const body = isMatch ? highlight(m.text, kws, t) : m.text;
-
       if (m.role === "user") {
         lines.push(
           t.bg("userMessageBg", padEndVisible(t.bold(t.fg("accent", fillLabel(msg("you")))), rw)),
         );
-        for (const wl of wrapLines(body, rw - 2)) {
-          lines.push(t.bg("userMessageBg", padEndVisible(" " + wl, rw)));
-        }
       } else {
         lines.push(t.fg("muted", fillLabel(msg("ai"))));
-        for (const wl of wrapLines(body, rw - 2)) lines.push(" " + wl);
       }
+      // 先渲染再高亮：往 markdown 源码里插转义码会把链接、代码块的语法弄坏
+      for (const l of this.renderMsg(m, rw)) lines.push(isMatch ? highlight(l, kws, t) : l);
       lines.push("");
     }
 

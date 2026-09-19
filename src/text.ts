@@ -1,4 +1,4 @@
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 // Windows 路径大小写不敏感，统一小写再比
 export const normPath = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
@@ -16,13 +16,4 @@ export function fmtTime(iso: string, withYear = false): string {
 export function padEndVisible(s: string, w: number): string {
   const v = visibleWidth(s);
   return v >= w ? truncateToWidth(s, w) : s + " ".repeat(w - v);
-}
-
-export function wrapLines(text: string, width: number): string[] {
-  const out: string[] = [];
-  for (const part of text.split("\n")) {
-    const wrapped = wrapTextWithAnsi(part, width);
-    out.push(...(wrapped.length ? wrapped : [""]));
-  }
-  return out;
 }
