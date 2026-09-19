@@ -16,7 +16,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/Jeffropz/pi-session-peek.git"
+    "url": "git+https://github.com/Jeffropz/pi-session-peek.git"
   },
   "homepage": "https://github.com/Jeffropz/pi-session-peek#readme",
   "bugs": "https://github.com/Jeffropz/pi-session-peek/issues",
