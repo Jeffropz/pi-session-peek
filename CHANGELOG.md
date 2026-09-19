@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - The preview renders messages with pi's own Markdown renderer: headings, bold, inline code, syntax-highlighted code blocks, tables with borders and cell wrapping, lists, quotes and links now look the same as in the main transcript.
 - Keyword highlighting is applied on top of the rendered lines, so it no longer breaks links or code blocks. A keyword that is split across a wrapped line is not highlighted at that spot; hit counting and Ctrl+N / Ctrl+P are unaffected.
