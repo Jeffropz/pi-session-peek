@@ -21,8 +21,14 @@ export interface PeekSession {
   mtime: number;
 }
 
-const SESSIONS_DIR = join(homedir(), ".pi", "agent", "sessions");
 const sessionCache = new Map<string, PeekSession>();
+
+// 和 pi 一样认 PI_CODING_AGENT_DIR
+function sessionsDir(): string {
+  const env = process.env.PI_CODING_AGENT_DIR;
+  const agent = env ? (env.startsWith("~") ? join(homedir(), env.slice(1)) : env) : join(homedir(), ".pi", "agent");
+  return join(agent, "sessions");
+}
 
 function* walkJsonl(dir: string): Generator<string> {
   let entries;
@@ -104,7 +110,7 @@ export function scanSessions(): PeekSession[] {
   const seen = new Set<string>();
   const out: PeekSession[] = [];
 
-  for (const file of walkJsonl(SESSIONS_DIR)) {
+  for (const file of walkJsonl(sessionsDir())) {
     seen.add(file);
     let mtime = 0;
     try {
@@ -134,7 +140,8 @@ export function scanSessions(): PeekSession[] {
 
 // 和 pi 自带的 /name 写同一种 session_info 记录，parentId 用文件里最后一条记录的 id
 export function renameSession(path: string, name: string): void {
-  const lines = readFileSync(path, "utf8").split("\n");
+  const raw = readFileSync(path, "utf8");
+  const lines = raw.split("\n");
   let parentId: string | null = null;
   for (let i = lines.length - 1; i >= 0; i--) {
     if (!lines[i]) continue;
@@ -155,7 +162,9 @@ export function renameSession(path: string, name: string): void {
     timestamp: new Date().toISOString(),
     name,
   };
-  appendFileSync(path, JSON.stringify(entry) + "\n", "utf8");
+  // 末行没换行（写了一半）时先补一个，别和新记录粘在一起
+  const sep = raw === "" || raw.endsWith("\n") ? "" : "\n";
+  appendFileSync(path, sep + JSON.stringify(entry) + "\n", "utf8");
 }
 
 // 先试 trash（能恢复），不行再直接删。trashExec 由调用方传入，方便测试

@@ -1,44 +1,121 @@
-# pi-session-peek
+# 🔍 pi-session-peek — Find That Old Conversation and Jump Back In
 
-搜索 [pi](https://pi.dev) 的历史会话，左边选、右边看完整对话，Enter 回到那个会话继续聊。
+[![npm](https://img.shields.io/npm/v/pi-session-peek)](https://www.npmjs.com/package/pi-session-peek) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-## 安装
+[中文说明](https://github.com/Jeffropz/pi-session-peek/blob/main/README.zh-CN.md)
+
+Search your [pi](https://pi.dev) session history by what was actually said, read the whole conversation in a side pane, then resume it or fork it.
+
+![pi-session-peek screenshot](https://raw.githubusercontent.com/Jeffropz/pi-session-peek/main/docs/screenshot.png)
+
+## ✨ Features
+
+- Opens a two-pane picker with `/peek` or `/peek <keyword>`: sessions on the left, the full conversation on the right.
+- Filters as you type across conversation text, session name and working directory. Tool call arguments and results are excluded, so a keyword only matches sessions that actually discussed it.
+- Requires every space-separated keyword to match, and shows a snippet around the first hit in the list.
+- Limits results to recently active sessions with `@7d`, `@24h`, `@2w` or `@1m`.
+- Highlights every hit in the preview and jumps between them with `Ctrl+N` / `Ctrl+P`.
+- Resumes with `Enter`, forks into a new session with `Ctrl+O`, renames with `Ctrl+R`, deletes with `Ctrl+D`.
+- Toggles between the current directory tree and all projects with `Tab`.
+- Starts straight into the picker with `pi --rp` or `pi --peek=<keyword>`.
+- Parses each session file once and caches it by mtime, so reopening is instant.
+
+## 📦 Install
+
+```bash
+pi install npm:pi-session-peek
+```
+
+Try it without installing permanently:
+
+```bash
+pi -e npm:pi-session-peek
+```
+
+Install from GitHub instead of npm:
 
 ```bash
 pi install git:github.com/Jeffropz/pi-session-peek
 ```
 
-也可以直接把仓库放到 `~/.pi/agent/extensions/session-peek/`，然后 `/reload`。
+Pi extensions run with the Pi process's user permissions, so install only trusted packages.
 
-## 用法
+## 🚀 Quick start
 
+In TUI mode, run `/peek` and start typing. Press `Enter` on a session to continue it, or `Ctrl+O` to continue in a fresh fork and leave the original untouched.
+
+## 💬 Commands
+
+| Command | Purpose |
+| --- | --- |
+| `/peek` | Open the picker. The previous keyword is remembered for the process. |
+| `/peek <keyword>` | Open the picker with the keyword filled in. |
+| `pi --rp` | Start pi and open the picker. Takes no argument. |
+| `pi --peek=<keyword>` | Start pi and open the picker with the keyword filled in. `--peek` requires a value. |
+
+## ⌨️ Keys
+
+| Key | Action |
+| --- | --- |
+| type | Filter. Space-separated words must all match; `@7d` and friends limit by time. |
+| `Tab` | Current directory tree ↔ all projects |
+| `↑` `↓` | Select session |
+| `PgUp` `PgDn` | Scroll preview by a page |
+| `Ctrl+U` `Ctrl+F` | Scroll preview by half a page |
+| `Shift+↑` `Shift+↓` | Scroll preview by three lines |
+| `Ctrl+N` `Ctrl+P` | Next / previous hit |
+| `Enter` | Resume the session |
+| `Ctrl+O` | Fork the session and open the fork |
+| `Ctrl+R` | Rename. Writes the same `session_info` entry as `/name`. |
+| `Ctrl+D` | Delete, confirmed with `y` or `Enter`. Uses the `trash` CLI when available, otherwise deletes the file. |
+| `Esc` `Ctrl+C` | Close |
+
+## 🔎 Search syntax
+
+The filter is case-insensitive and matches anywhere in the text.
+
+| Input | Meaning |
+| --- | --- |
+| `token undefined` | Sessions containing both `token` and `undefined` |
+| `@7d` | Sessions active in the last 7 days. Units: `h`, `d`, `w`, `m` (30 days). |
+| `token @2w` | Both combined |
+
+The search index holds user and assistant messages, the session name and the working directory. It does not hold tool call arguments or tool results.
+
+## 🚧 Limitations
+
+- TUI mode only.
+- The interface text is Chinese.
+- No mouse support. Pi only enables mouse input in its experimental fullscreen mode, and this picker does not handle it yet.
+- The preview shows the last 500 messages of very long sessions. Hits in earlier messages are still counted and announced.
+- `pi --peek` without a value is rejected by pi at startup. Use `pi --rp` to open without a keyword.
+- Only sessions under `~/.pi/agent/sessions` (or `$PI_CODING_AGENT_DIR/sessions`) are scanned.
+
+## 🗂️ Package layout
+
+```text
+pi-session-peek/
+├── index.ts                 # Registers /peek and the startup flags, injects delete / rename / fork
+├── src/
+│   ├── peek-component.ts    # The two-pane TUI component
+│   ├── sessions.ts          # Scans and parses session JSONL, rename / delete helpers
+│   ├── query.ts             # Query parsing, highlighting, hit snippets
+│   └── text.ts              # Path, time and width helpers
+├── scripts/screenshot.mjs   # Optional: renders a synthetic screenshot from component output
+└── test/                    # node:test suites
 ```
-/peek                 打开
-/peek 关键词          带关键词打开
-pi --rp               启动 pi 时直接打开
-pi --peek=关键词      启动时带关键词打开
+
+## 🛠️ Development
+
+```bash
+npm install
+npm test               # node:test via tsx
+npm run typecheck      # tsc --noEmit
+npm run screenshot     # optional: overwrite docs/screenshot.png with a synthetic render (needs Chrome)
 ```
 
-搜索框里空格分隔多个词表示都要命中；`@7d`、`@24h`、`@2w`、`@1m` 只看最近活动过的会话。搜的是对话正文、会话名和工作目录，不包括工具调用的输入输出。
+To load a local checkout, add its path under `extensions` in `~/.pi/agent/settings.json` or drop the folder into `~/.pi/agent/extensions/`, then `/reload`.
 
-| 按键 | 作用 |
-|------|------|
-| `Tab` | 当前目录树 / 全部项目 |
-| `↑` `↓` | 选会话 |
-| `PgUp` `PgDn` | 预览翻页 |
-| `Ctrl+U` `Ctrl+F` | 预览翻半页 |
-| `Shift+↑` `Shift+↓` | 预览滚 3 行 |
-| `Ctrl+N` `Ctrl+P` | 下一个 / 上一个命中 |
-| `Enter` | 进入会话 |
-| `Ctrl+O` | 从这个会话分叉出新会话再进入 |
-| `Ctrl+R` | 重命名（和 `/name` 效果一样） |
-| `Ctrl+D` | 删除，`y` 或 `Enter` 确认；有 `trash` 命令就进回收站 |
-| `Esc` `Ctrl+C` | 关闭 |
+## 📄 License
 
-## English
-
-Search pi session history in a two-pane picker. Type to filter (space-separated words must all match, `@7d` limits to recent sessions), `Enter` to resume, `Ctrl+O` to fork, `Ctrl+R` to rename, `Ctrl+D` to delete, `Tab` to toggle between the current directory tree and all projects. Install with `pi install git:github.com/Jeffropz/pi-session-peek`. The UI text is Chinese.
-
-## License
-
-MIT © Jeffropz
+MIT. See [`LICENSE`](./LICENSE).

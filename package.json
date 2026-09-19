@@ -1,23 +1,45 @@
 {
   "name": "pi-session-peek",
   "version": "0.1.0",
-  "description": "Search pi session history with a two-pane preview picker: keyword highlight, scrollable full conversation, one-key resume",
-  "keywords": [
-    "pi-package"
-  ],
+  "description": "Pi extension: search session history in a two-pane picker with full conversation preview, then resume or fork.",
+  "type": "module",
   "license": "MIT",
   "author": "Jeffropz",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "pi-coding-agent",
+    "session",
+    "search",
+    "resume"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/Jeffropz/pi-session-peek.git"
   },
-  "scripts": {
-    "typecheck": "tsc --noEmit"
-  },
+  "homepage": "https://github.com/Jeffropz/pi-session-peek#readme",
+  "bugs": "https://github.com/Jeffropz/pi-session-peek/issues",
+  "files": [
+    "index.ts",
+    "src",
+    "docs/screenshot.png",
+    "README.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "pi": {
     "extensions": [
       "./index.ts"
     ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "check": "npm run typecheck && npm test",
+    "screenshot": "node --import tsx scripts/screenshot.mjs",
+    "prepublishOnly": "npm run check"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
@@ -32,7 +54,10 @@
     }
   },
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "@earendil-works/pi-tui": "0.85.1",
     "@types/node": "^22",
+    "tsx": "^4",
     "typescript": "^5"
   }
 }
