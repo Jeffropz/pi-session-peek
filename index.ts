@@ -1,4 +1,4 @@
-import { getMarkdownTheme, SessionManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { copyToClipboard, getMarkdownTheme, SessionManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { basename } from "node:path";
 import { msg } from "./src/i18n.ts";
 import { attachMouse } from "./src/mouse.ts";
@@ -68,7 +68,16 @@ export default function (pi: ExtensionAPI) {
         comp.requestRender = () => tui.requestRender();
         // 常规模式 pi 不开鼠标，自己开；全屏模式 pi-tui 会直接调 comp.handleMouse
         const mouse = attachMouse(comp, tui);
-        comp.dispose = () => mouse.dispose();
+        comp.onDispose = () => mouse.dispose();
+        // 鼠标拖选后 Ctrl+C 复制。用 pi 自己的复制：原生剪贴板，不行再退到 OSC 52
+        comp.onCopy = async (text) => {
+          try {
+            await copyToClipboard(text);
+            return true;
+          } catch {
+            return false;
+          }
+        };
         comp.onResume = (s) => {
           lastQuery = comp.getQuery();
           done({ s, action: "resume" });

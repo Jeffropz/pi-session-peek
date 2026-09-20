@@ -8,7 +8,7 @@ import { mdTheme, strip, theme } from "./helpers.ts";
 
 setLang("zh");
 
-const tick = () => new Promise((r) => setTimeout(r, 5));
+const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
 
 const KEY = { enter: "\r", tab: "\t", up: "\x1b[A", down: "\x1b[B", bs: "\x7f", esc: "\x1b", cc: "\x03", cd: "\x04", cf: "\x06", co: "\x0f", cr: "\x12", ct: "\x14", cu: "\x15" };
 
@@ -579,18 +579,20 @@ test("鼠标：没画过之前不处理；左栏按下选中，同一项再按�
   const got: string[] = [];
   c.onResume = (s: PeekSession) => got.push(s.cwd);
   // 第 3 项占主体第 4、5 行，即组件第 7、8 行
-  assert.deepEqual(c.handleMouse(MOUSE("press", 2, 8)), { handled: true, render: true });
+  assert.deepEqual(c.handleMouse(MOUSE("press", 2, 8)), { handled: true, capture: true, render: true });
   assert.equal(c.selected, 2);
-  assert.deepEqual(c.handleMouse(MOUSE("press", lw - 1, 7)), { handled: true, render: false });
+  assert.deepEqual(c.handleMouse(MOUSE("press", lw - 1, 7)), { handled: true, capture: true, render: false });
   assert.equal(c.selected, 2);
   c.handleMouse(MOUSE("click", 2, 8, { clickCount: 1 }));
   assert.deepEqual(got, []);
   c.handleMouse(MOUSE("click", 2, 8, { clickCount: 2 }));
   assert.deepEqual(got, ["D:/projX"]);
-  // 列表下面的空白行和右栏都不管，全屏模式下 pi-tui 还能在那里选文字
-  assert.equal(c.handleMouse(MOUSE("press", 2, 3 + 8)), undefined);
-  assert.equal(c.handleMouse(MOUSE("press", lw + 5, 5)), undefined);
-  assert.equal(c.handleMouse(MOUSE("release", 2, 8)), undefined);
+  // 列表下面的空白行和右栏按下也接管（可能是拖选的起点），但不改选中项
+  assert.deepEqual(c.handleMouse(MOUSE("press", 2, 3 + 8)), { handled: true, capture: true, render: false });
+  assert.deepEqual(c.handleMouse(MOUSE("release", 2, 3 + 8)), { handled: true, render: false });
+  assert.deepEqual(c.handleMouse(MOUSE("press", lw + 5, 5)), { handled: true, capture: true, render: false });
+  c.handleMouse(MOUSE("release", lw + 5, 5));
+  assert.equal(c.handleMouse(MOUSE("release", 2, 8)), undefined); // 没按下就松开，不管
   assert.equal(c.selected, 2);
 });
 
@@ -648,7 +650,7 @@ test("鼠标：删除确认中按一下就取消；改名中滚轮不换会话�
   c.render(120);
   c.handleInput(KEY.cd);
   assert.equal(c.confirmingDelete, true);
-  assert.deepEqual(c.handleMouse(MOUSE("press", c.layout.lw + 5, 5)), { handled: true, render: true });
+  assert.deepEqual(c.handleMouse(MOUSE("press", c.layout.lw + 5, 5)), { handled: true, capture: true, render: true });
   assert.equal(c.confirmingDelete, false);
 
   c.handleInput(KEY.cr);
@@ -680,4 +682,149 @@ test("cursorRow：没焦点时不知道，搜索框在第 1 行，改名时在�
   assert.equal(c.cursorRow(), 3 + c.layout.H + 1);
   c.handleInput(KEY.esc);
   assert.equal(c.cursorRow(), 1);
+});
+
+// 拖选：按下 → 拖动 → 松开，只高亮不复制；Ctrl+C 复制
+const drag = (c: any, x0: number, y0: number, x1: number, y1: number) => {
+  c.handleMouse(MOUSE("press", x0, y0));
+  c.handleMouse({ ...MOUSE("press", x1, y1), type: "drag" });
+  c.handleMouse(MOUSE("release", x1, y1));
+};
+const INV = "\x1b[7m";
+// 主体里带反显的行号（搜索框的光标也是反显，不算）
+const hlRows = (c: any, width = 120): number[] =>
+  c.render(width).map((l: string, i: number) => (i >= 3 && i < 3 + c.layout.H && l.includes(INV) ? i : -1)).filter((i: number) => i >= 0);
+
+function longFixture() {
+  const texts = Array.from({ length: 30 }, (_, i) => `line ${String(i).padStart(2, "0")} ${"abcdefghij".repeat(6)}`);
+  return [mk("D:/proj", texts, 1), mk("D:/other", ["other one", "reply"], 2)];
+}
+
+test("拖选：右栏拖出的选区只在右栏，首行从起点起、中间整行、末行到终点；松开不复制，Ctrl+C 才复制并清掉高亮", async () => {
+  const c = make(longFixture(), "D:/nowhere");
+  const copied: string[] = [];
+  c.onCopy = async (t: string) => (copied.push(t), true);
+  let cancelled = 0;
+  c.onCancel = () => cancelled++;
+  c.render(120);
+  const { lw, rw, H } = c.layout;
+  const x0 = lw + 3;
+  c.handleInput(KEY.cu);
+  c.handleInput(KEY.cu);
+  c.render(120);
+  const top = c.previewOffset;
+  const raw: string[] = c.previewLines.map(strip);
+  // 从第 2 行第 4 列拖到第 4 行第 8 列（都是主体行号）
+  const r = c.handleMouse(MOUSE("press", x0 + 4, 3 + 2));
+  assert.deepEqual(r, { handled: true, capture: true, render: false });
+  assert.deepEqual(hlRows(c), [], "no highlight before dragging");
+  c.handleMouse({ ...MOUSE("press", x0 + 8, 3 + 4), type: "drag" });
+  assert.deepEqual(c.handleMouse(MOUSE("release", x0 + 8, 3 + 4)), { handled: true, render: false });
+  assert.equal(copied.length, 0, "release does not copy");
+  const lines = c.render(120);
+  const hl = hlRows(c);
+  assert.deepEqual(hl, [3 + 2, 3 + 3, 3 + 4]);
+  // 高亮只在右栏：分隔线左边没有反显
+  for (const i of hl) {
+    const line = lines[i];
+    assert.ok(line.indexOf(INV) > line.indexOf("│"), "highlight starts after the separator");
+  }
+  assert.ok(strip(lines.at(-1)).includes("已选 3 行"), strip(lines.at(-1)));
+  c.handleInput(KEY.cc);
+  await tick();
+  assert.equal(cancelled, 0, "Ctrl+C with a selection copies instead of closing");
+  assert.deepEqual(copied, [[raw[top + 2].slice(4).trimEnd(), raw[top + 3].trimEnd(), raw[top + 4].slice(0, 9).trimEnd()].join("\n")]);
+  assert.deepEqual(hlRows(c), [], "highlight cleared after copy");
+  assert.ok(strip(c.render(120).at(-1)).includes("已复制 3 行"));
+  c.handleInput(KEY.cc);
+  assert.equal(cancelled, 1, "Ctrl+C without a selection closes");
+  assert.ok(rw > 20 && H > 0);
+});
+
+test("拖选：左栏的选区不会跨到右栏，拖到右栏也只选左栏的字；文字来自列表行", async () => {
+  const c = make(longFixture(), "D:/nowhere");
+  const copied: string[] = [];
+  c.onCopy = async (t: string) => (copied.push(t), true);
+  const lines0 = c.render(120);
+  const { lw } = c.layout;
+  drag(c, 2, 3, lw + 20, 4 + 3); // 从第 1 项第一行拖到右栏
+  const lines = c.render(120);
+  for (const i of [3, 4, 5, 6, 7]) {
+    const line = lines[i];
+    assert.ok(line.includes(INV), `row ${i} highlighted`);
+    assert.ok(line.indexOf("\x1b[27m") < line.indexOf("│"), `row ${i}: highlight ends before the separator`);
+  }
+  assert.ok(!lines[8].includes(INV));
+  c.handleInput(KEY.cc);
+  await tick();
+  const left = lines0.slice(3, 8).map((l: string) => strip(l).slice(0, lw));
+  const want = [left[0].slice(2).trimEnd(), ...left.slice(1, 4).map((l: string) => l.trimEnd()), left[4].slice(0, lw).trimEnd()].join("\n");
+  assert.deepEqual(copied, [want]);
+  assert.ok(copied[0].includes("proj"));
+  assert.ok(!copied[0].includes("│"));
+});
+
+test("拖选：往上拖也行；单击不留选区；再按一下清掉选区；换会话、打字、Ctrl+T 都清掉", () => {
+  const c = make(longFixture(), "D:/nowhere");
+  c.render(120);
+  const x0 = c.layout.lw + 3;
+  drag(c, x0 + 5, 3 + 5, x0 + 1, 3 + 2);
+  assert.equal(hlRows(c).length, 4);
+  assert.deepEqual(c.handleMouse(MOUSE("press", x0 + 1, 3 + 1)), { handled: true, capture: true, render: true });
+  c.handleMouse(MOUSE("release", x0 + 1, 3 + 1));
+  assert.equal(hlRows(c).length, 0);
+  assert.equal(c.sel, undefined);
+
+  drag(c, x0 + 5, 3 + 5, x0 + 1, 3 + 2);
+  c.handleInput(KEY.down);
+  assert.equal(hlRows(c).length, 0);
+  drag(c, x0 + 5, 3 + 5, x0 + 1, 3 + 2);
+  type(c, "x");
+  assert.equal(c.sel, undefined);
+  c.handleInput(KEY.bs);
+  drag(c, x0 + 5, 3 + 5, x0 + 1, 3 + 2);
+  c.handleInput(KEY.ct);
+  assert.equal(c.sel, undefined);
+  // 预览滚动不清选区，高亮跟着内容走
+  c.render(120); // 按键之后先画一帧，鼠标坐标才对得上当前的预览位置
+  drag(c, x0 + 5, 3 + 5, x0 + 1, 3 + 2);
+  const before = hlRows(c)[0];
+  assert.equal(before, 3 + 2);
+  c.handleInput("\x1b[1;2A"); // Shift+↑ 滚三行
+  const after = hlRows(c)[0];
+  assert.equal(after, before + 3);
+});
+
+test("拖选：右栏拖出下边自动滚动，焦点跟到最后一行；松开停下", async () => {
+  const c = make(longFixture(), "D:/nowhere");
+  c.render(120);
+  const { lw, H } = c.layout;
+  const x0 = lw + 3;
+  c.handleInput(KEY.cu);
+  c.handleInput(KEY.cu);
+  c.handleInput(KEY.cu);
+  c.render(120);
+  const top = c.previewOffset;
+  assert.ok(top + H < c.previewLines.length - 5, "room to scroll");
+  c.handleMouse(MOUSE("press", x0 + 2, 3 + 2));
+  c.handleMouse({ ...MOUSE("press", x0 + 2, 3 + H + 1), type: "drag" }); // 拖到主体下面
+  assert.equal(c.autoScrollDir, 1);
+  await tick(130);
+  assert.ok(c.previewOffset > top, "scrolled down");
+  assert.equal(c.sel.focus.row, c.previewOffset + H - 1, "focus follows the bottom row");
+  c.handleMouse(MOUSE("release", x0 + 2, 3 + H + 1));
+  const stopped = c.previewOffset;
+  await tick(130);
+  assert.equal(c.previewOffset, stopped, "stops on release");
+  assert.equal(c.autoScrollTimer, undefined);
+  c.dispose();
+});
+
+test("dispose 停掉计时器并调 onDispose", () => {
+  const c = make();
+  let disposed = 0;
+  c.onDispose = () => disposed++;
+  c.render(120);
+  c.dispose();
+  assert.equal(disposed, 1);
 });

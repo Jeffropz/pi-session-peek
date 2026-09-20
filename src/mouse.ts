@@ -10,8 +10,9 @@ import type { TuiInputListenerResult, TuiMouseButton, TuiMouseEvent, TuiMouseEve
 // 开了鼠标上报之后终端自己的选文字 / 滚回看历史就不能用了（多数终端按住 Shift 仍可以），
 // 不想要的话设 PI_SESSION_PEEK_MOUSE=0。
 
-const ENABLE_MOUSE = "\x1b[?1000h\x1b[?1006h";
-const DISABLE_MOUSE = "\x1b[?1006l\x1b[?1000l";
+// 1002：按着键移动也上报，拖选要用；不认 1002 的终端退到 1000 只报按下松开
+const ENABLE_MOUSE = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+const DISABLE_MOUSE = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
 const CURSOR_QUERY = "\x1b[6n";
 const DOUBLE_CLICK_MS = 500; // 和 pi-tui 全屏模式一样
 const QUERY_TIMEOUT_MS = 1000; // 终端不回复就当丢了，允许下次重画再问
@@ -67,6 +68,7 @@ export function attachMouse(target: MouseTarget, tui: MouseHost, env: NodeJS.Pro
   let scheduled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pressed: { x: number; y: number } | undefined;
+  let moved = false; // 按下之后指针换过格没有；换过就不算单击
   let lastClick: { x: number; y: number; at: number; count: number } | undefined;
   let disposed = false;
   let off: (() => void) | undefined;
@@ -151,16 +153,22 @@ export function attachMouse(target: MouseTarget, tui: MouseHost, env: NodeJS.Pro
       if (!release && dir) {
         dispatch({ ...base, type: "wheel", button: "none", wheelDelta: dir * (base.alt ? ALT_WHEEL_MULTIPLIER : 1) });
       }
-    } else if (!(b & 32)) {
-      // 没开移动上报，带移动位的按理不会来
+    } else {
       const button = decodeButton(b);
-      if (!release) {
+      if (b & 32) {
+        // 按着键移动。没开 1003，不带键的纯移动不该来，来了也不管
+        if (button === "none" || !pressed) return { consume: true };
+        if (sx !== pressed.x || sy !== pressed.y) moved = true;
+        dispatch({ ...base, type: "drag", button });
+      } else if (!release) {
         pressed = { x: sx, y: sy };
+        moved = false;
         dispatch({ ...base, type: "press", button });
       } else {
+        if (pressed && (sx !== pressed.x || sy !== pressed.y)) moved = true;
         dispatch({ ...base, type: "release", button });
-        // 同一格按下再松开算一次点击；短时间内在同一格连点，次数 1 → 2 → 3 循环
-        if (pressed && pressed.x === sx && pressed.y === sy) {
+        // 按下松开之间没动过算一次点击；短时间内在同一格连点，次数 1 → 2 → 3 循环
+        if (pressed && !moved) {
           const now = Date.now();
           const again = lastClick && now - lastClick.at <= DOUBLE_CLICK_MS && lastClick.x === sx && lastClick.y === sy;
           const count = again && lastClick ? (lastClick.count % 3) + 1 : 1;

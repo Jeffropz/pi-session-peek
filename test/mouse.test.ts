@@ -5,8 +5,8 @@ import { attachMouse, DETACH_GRACE_MS, type MouseHost, type MouseTarget } from "
 
 // 常规模式的鼠标桥接：开关鼠标上报、用光标位置查询算组件顶行、把 SGR 序列换算成组件内坐标
 
-const ENABLE = "\x1b[?1000h\x1b[?1006h";
-const DISABLE = "\x1b[?1006l\x1b[?1000l";
+const ENABLE = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+const DISABLE = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
 const CPR_QUERY = "\x1b[6n";
 
 const tick = (ms = 1) => new Promise((r) => setTimeout(r, ms));
@@ -174,6 +174,33 @@ test("按下 / 松开换算成 press、release、click；同一格连点 clickCo
   h.feed("\x1b[<20;3;12M");
   assert.equal(t.events.at(-1)?.ctrl, true);
   assert.equal(t.events.at(-1)?.shift, true);
+});
+
+test("按着左键移动是 drag；动过之后松开不算点击，回到原格松开也不算", async () => {
+  const h = host();
+  const t = target();
+  attachMouse(t, h);
+  await locate(h, t, 5);
+  h.feed("\x1b[<0;3;12M");
+  h.feed("\x1b[<32;4;12M");
+  h.feed("\x1b[<32;6;13M");
+  h.feed("\x1b[<32;3;12M");
+  h.feed("\x1b[<0;3;12m");
+  assert.deepEqual(
+    t.events.map((e) => [e.type, e.button, e.x, e.y]),
+    [
+      ["press", "left", 2, 6],
+      ["drag", "left", 3, 6],
+      ["drag", "left", 5, 7],
+      ["drag", "left", 2, 6],
+      ["release", "left", 2, 6],
+    ],
+  );
+  // 没按下时来的移动事件（35 = 不带键）不发
+  h.feed("\x1b[<35;4;12M");
+  assert.equal(t.events.length, 5);
+  // 拖动也让组件重画
+  assert.equal(h.renders(), 4);
 });
 
 test("滚轮：64 向上 65 向下，按住 Alt 五倍；横向滚轮忽略", async () => {

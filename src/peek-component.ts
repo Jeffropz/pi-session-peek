@@ -12,14 +12,18 @@ import {
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import { msg } from "./i18n.ts";
-import { anyMatch, highlight, lineHasMatch, matchesSession, parseQuery, roleTerms, snippet, type ParsedQuery } from "./query.ts";
+import { anyMatch, highlight, lineHasMatch, matchesSession, parseQuery, roleTerms, snippet, type ParsedQuery, type RoleTerms } from "./query.ts";
+import { bounds, highlightColumns, rowColumns, selectionText, type Cell, type Pane, type Selection } from "./selection.ts";
 import type { PeekMsg, PeekSession } from "./sessions.ts";
 import { fmtTime, normPath, padEndVisible } from "./text.ts";
 
 // 双栏选择器。文件操作（删除 / 重命名 / 分叉）不在这里做，由 index.ts 通过回调注入
 
 const BODY_TOP = 3; // 头部、搜索框、分隔线之后才是双栏主体
+const SEP = 3; // 两栏之间 " │ " 占的列数
 const WHEEL_LINES = 3; // 滚轮每格滚几行预览，和 Shift+↑↓ 一样
+const AUTO_SCROLL_MS = 50; // 拖选拖出预览上下边时自动滚动的节奏，和 pi-tui 一样
+const HINT_MS = 1500; // 底部"已复制"提示停留时间
 
 export class PeekComponent implements Component, Focusable {
   private input: Input;
@@ -40,6 +44,14 @@ export class PeekComponent implements Component, Focusable {
   private cachedLines: string[] = [];
   private layout = { lw: 0, rw: 0, H: 0 }; // 最近一次 render 的分栏尺寸，鼠标定位用
   private scopeSpan: [number, number] = [0, 0]; // 头部"范围"字样占的列区间，点击切换范围
+  private sel?: Selection; // 鼠标拖出来的选区，只在一栏里
+  private dragging = false; // 左键还按着
+  private selMoved = false; // 按下之后拖过没有；没拖过的选区不显示也不算数（那是单击）
+  private dragX = 0; // 最近一次拖动的列，自动滚动时焦点跟着它
+  private autoScrollDir = 0; // 拖出预览上下边：-1 往上 1 往下
+  private autoScrollTimer?: ReturnType<typeof setInterval>;
+  private hint?: { text: string; ok: boolean }; // 底部一闪而过的复制结果
+  private hintTimer?: ReturnType<typeof setTimeout>;
   private _focused = false;
 
   // 由 index.ts 注入
@@ -48,9 +60,10 @@ export class PeekComponent implements Component, Focusable {
   onCancel?: () => void;
   onDelete?: (s: PeekSession) => Promise<boolean>;
   onRename?: (s: PeekSession, name: string) => Promise<boolean>;
+  onCopy?: (text: string) => Promise<boolean>; // 拖选后 Ctrl+C
+  onDispose?: () => void; // 关闭时
   requestRender?: () => void; // 异步操作完成后让 TUI 重画
   afterRender?: () => void; // 每次 render 之后调用；常规模式的鼠标桥接靠它重新测组件在屏幕上的位置
-  dispose?: () => void; // 关闭时由 pi 调用
 
   constructor(
     private all: PeekSession[],
@@ -106,6 +119,33 @@ export class PeekComponent implements Component, Focusable {
     this.selected = idx >= 0 ? idx : keepSelection ? Math.min(this.selected, Math.max(0, out.length - 1)) : 0;
     if (!keepSelection) this.listOffset = 0;
     this.previewKey = "";
+    this.clearSelection();
+  }
+
+  // 换选中的会话：预览重建，拖选的选区作废
+  private select(idx: number): void {
+    this.selected = idx;
+    this.previewKey = "";
+    this.clearSelection();
+  }
+
+  private clearSelection(): void {
+    this.sel = undefined;
+    this.dragging = false;
+    this.selMoved = false;
+    this.stopAutoScroll();
+  }
+
+  // 拖过的才算选区，只按下没拖的是单击
+  private activeSel(): Selection | undefined {
+    return this.sel && this.selMoved ? this.sel : undefined;
+  }
+
+  dispose(): void {
+    this.stopAutoScroll();
+    if (this.hintTimer) clearTimeout(this.hintTimer);
+    this.hintTimer = undefined;
+    this.onDispose?.();
   }
 
   private bodyHeight(): number {
@@ -161,6 +201,7 @@ export class PeekComponent implements Component, Focusable {
               // 选中位置留在原地
               this.selected = Math.min(this.selected, Math.max(0, this.filtered.length - 1));
               this.previewKey = "";
+              this.clearSelection();
             }
             this.invalidate();
             this.requestRender?.();
@@ -170,6 +211,11 @@ export class PeekComponent implements Component, Focusable {
       return;
     }
     if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
+      // 有拖选的选区时 Ctrl+C 是复制，和终端里的习惯一样；没有才是关闭
+      if (matchesKey(data, Key.ctrl("c")) && this.activeSel()) {
+        this.copySelection();
+        return;
+      }
       this.onCancel?.();
       return;
     }
@@ -198,16 +244,14 @@ export class PeekComponent implements Component, Focusable {
     }
     if (matchesKey(data, Key.up)) {
       if (this.selected > 0) {
-        this.selected--;
-        this.previewKey = "";
+        this.select(this.selected - 1);
         this.invalidate();
       }
       return;
     }
     if (matchesKey(data, Key.down)) {
       if (this.selected < this.filtered.length - 1) {
-        this.selected++;
-        this.previewKey = "";
+        this.select(this.selected + 1);
         this.invalidate();
       }
       return;
@@ -237,6 +281,7 @@ export class PeekComponent implements Component, Focusable {
     if (matchesKey(data, Key.ctrl("t"))) {
       this.showTools = !this.showTools;
       this.previewKey = "";
+      this.clearSelection();
       this.invalidate();
       return;
     }
@@ -271,7 +316,8 @@ export class PeekComponent implements Component, Focusable {
     return this.renaming ? BODY_TOP + this.layout.H + 1 : 1;
   }
 
-  // 鼠标：左栏按下选中、双击进入、滚轮换选中项；右栏滚轮滚预览；点头部"范围"切换；点输入框移光标。
+  // 鼠标：左栏按下选中、双击进入、滚轮换选中项；右栏滚轮滚预览；点头部"范围"切换；点输入框移光标；
+  // 在任一栏里按住拖动是选文字，只选这一栏，Ctrl+C 复制。
   // 全屏模式由 pi-tui 按布局直接调，常规模式由 mouse.ts 换算成组件内坐标后调。坐标以组件左上角为原点
   handleMouse(ev: TuiMouseEvent): TuiMouseEventResult | undefined {
     const { lw, H } = this.layout;
@@ -291,8 +337,7 @@ export class PeekComponent implements Component, Focusable {
           // 改名中换了会话就改错对象了
           const next = Math.max(0, Math.min(this.filtered.length - 1, this.selected + delta));
           if (next !== this.selected) {
-            this.selected = next;
-            this.previewKey = "";
+            this.select(next);
             changed = true;
           }
         }
@@ -307,7 +352,24 @@ export class PeekComponent implements Component, Focusable {
       if (changed) this.invalidate();
       return { handled: true, render: changed };
     }
+    if (ev.type === "drag") {
+      if (!this.dragging || !this.sel || ev.button !== "left") return undefined;
+      this.dragX = ev.x;
+      const changed = this.dragTo(ev.x, ev.y);
+      if (changed) this.selMoved = true;
+      // 右栏拖出上下边就自动滚；左栏不滚，列表是跟着选中项走的
+      if (this.sel.pane === "preview") this.setAutoScroll(bodyRow < 0 ? -1 : bodyRow >= H ? 1 : 0);
+      if (changed) this.invalidate();
+      return { handled: true, render: changed };
+    }
     if (ev.button !== "left") return undefined;
+    if (ev.type === "release") {
+      if (!this.dragging) return undefined;
+      this.dragging = false;
+      this.stopAutoScroll();
+      if (!this.selMoved) this.sel = undefined; // 没拖过就是单击
+      return { handled: true, render: false };
+    }
     if (ev.type === "click") {
       // 单击在 press 里已经选中了，双击才进入
       const s = this.filtered[itemAt()];
@@ -317,8 +379,10 @@ export class PeekComponent implements Component, Focusable {
     }
     if (ev.type !== "press") return undefined;
 
-    let changed = this.confirmingDelete; // 删除确认和按键一样，点一下就算取消
+    // 删除确认和已有的选区：点一下就没了，和按键一样
+    let changed = this.confirmingDelete || this.activeSel() !== undefined;
     this.confirmingDelete = false;
+    this.clearSelection();
     let handled = changed;
     if (this.renaming) {
       if (ev.y === BODY_TOP + H + 1) {
@@ -337,18 +401,109 @@ export class PeekComponent implements Component, Focusable {
       }
     } else {
       const idx = itemAt();
-      if (idx >= 0 && idx < this.filtered.length) {
-        handled = true; // 已选中的再按一次也算处理了，全屏模式下 pi-tui 才会把后面的双击发过来
-        if (idx !== this.selected) {
-          this.selected = idx;
-          this.previewKey = "";
-          changed = true;
-        }
+      if (idx >= 0 && idx < this.filtered.length && idx !== this.selected) {
+        this.select(idx);
+        changed = true;
       }
     }
-    if (!handled) return undefined; // 右栏和空白处不管，全屏模式下 pi-tui 还能在那里选文字
+    if (inBody) {
+      // 两栏里按下都可能是拖选的起点，拖起来才算数；接管后面的拖动和松开
+      const pane: Pane = inList ? "list" : "preview";
+      const cell = this.cellAt(pane, ev.x, bodyRow);
+      this.sel = { pane, anchor: cell, focus: { ...cell } };
+      this.dragging = true;
+      this.dragX = ev.x;
+      handled = true;
+    }
+    if (!handled) return undefined;
     if (changed) this.invalidate();
-    return { handled: true, render: changed };
+    return inBody ? { handled: true, capture: true, render: changed } : { handled: true, render: changed };
+  }
+
+  // 屏幕位置换成某一栏的内容坐标：行是内容的绝对行号，列夹在这一栏里，拖到栏外也只选栏内的字
+  private cellAt(pane: Pane, x: number, bodyRow: number): Cell {
+    const { lw, rw, H } = this.layout;
+    const row = Math.max(0, Math.min(H - 1, bodyRow));
+    if (pane === "list") return { row: this.listOffset * 2 + row, col: Math.max(0, Math.min(lw - 1, x)) };
+    return { row: this.previewOffset + row, col: Math.max(0, Math.min(rw - 1, x - lw - SEP)) };
+  }
+
+  // 拖到某个位置：焦点跟过去。返回有没有变
+  private dragTo(x: number, y: number): boolean {
+    if (!this.sel) return false;
+    const cell = this.cellAt(this.sel.pane, x, y - BODY_TOP);
+    if (cell.row === this.sel.focus.row && cell.col === this.sel.focus.col) return false;
+    this.sel.focus = cell;
+    return true;
+  }
+
+  private setAutoScroll(dir: number): void {
+    this.autoScrollDir = dir;
+    if (!dir) {
+      this.stopAutoScroll();
+      return;
+    }
+    if (this.autoScrollTimer) return;
+    this.autoScrollTimer = setInterval(() => this.autoScrollTick(), AUTO_SCROLL_MS);
+    this.autoScrollTimer.unref?.();
+  }
+
+  // 每次滚一行，焦点跟着指针：指针在上边就是视口第一行，在下边就是最后一行
+  private autoScrollTick(): void {
+    const { H } = this.layout;
+    const maxOff = Math.max(0, this.previewLines.length - H);
+    const next = Math.max(0, Math.min(maxOff, this.previewOffset + this.autoScrollDir));
+    if (!this.sel || !this.dragging || next === this.previewOffset) {
+      this.stopAutoScroll();
+      return;
+    }
+    this.previewOffset = next;
+    if (this.dragTo(this.dragX, this.autoScrollDir < 0 ? BODY_TOP - 1 : BODY_TOP + H)) this.selMoved = true;
+    this.invalidate();
+    this.requestRender?.();
+  }
+
+  private stopAutoScroll(): void {
+    if (this.autoScrollTimer) clearInterval(this.autoScrollTimer);
+    this.autoScrollTimer = undefined;
+    this.autoScrollDir = 0;
+  }
+
+  // 选区里的纯文本
+  private selectionToText(sel: Selection): string {
+    const { lw, rw } = this.layout;
+    if (sel.pane === "preview") return selectionText(sel, rw, (row) => this.previewLines[row]);
+    const { rt, hasBody } = this.listTerms();
+    return selectionText(sel, lw, (row) => {
+      const s = this.filtered[row >> 1];
+      return s && this.listRows(s, (row >> 1) === this.selected, lw, rt, hasBody)[row & 1];
+    });
+  }
+
+  // Ctrl+C：复制选区，清掉高亮，底部闪一下结果
+  private copySelection(): void {
+    const sel = this.activeSel();
+    if (!sel) return;
+    const text = this.selectionToText(sel);
+    const n = text.split("\n").length;
+    this.clearSelection();
+    this.invalidate();
+    if (!text.trim() || !this.onCopy) return;
+    void this.onCopy(text).then((ok) => this.showHint(ok ? msg("copied", { n }) : msg("copyFailed"), ok));
+  }
+
+  private showHint(text: string, ok: boolean): void {
+    this.hint = { text, ok };
+    if (this.hintTimer) clearTimeout(this.hintTimer);
+    this.hintTimer = setTimeout(() => {
+      this.hintTimer = undefined;
+      this.hint = undefined;
+      this.invalidate();
+      this.requestRender?.();
+    }, HINT_MS);
+    this.hintTimer.unref?.();
+    this.invalidate();
+    this.requestRender?.();
   }
 
   // 预览里跳到当前视口之外的下一个 / 上一个命中行，到头了回绕。同一屏里的多个命中算一处，
@@ -370,11 +525,37 @@ export class PeekComponent implements Component, Focusable {
     }
   }
 
+  // 左栏用的关键词：排除词和 name: / cwd: 不在正文里高亮
+  private listTerms(): { rt: RoleTerms; hasBody: boolean } {
+    const rt = roleTerms(this.query().terms);
+    return { rt, hasBody: rt.user.length > 0 || rt.assistant.length > 0 };
+  }
+
+  // 左栏一个会话的两行：时间 + 目录（有正文关键词时加命中数），首条消息或命中片段
+  private listRows(s: PeekSession, sel: boolean, lw: number, rt: RoleTerms, hasBody: boolean): [string, string] {
+    const t = this.theme;
+    const time = fmtTime(s.time);
+    const cwdTail = s.cwd.replace(/\\/g, "/").split("/").slice(-2).join("/");
+    const hitBadge = hasBody
+      ? ` ·${s.msgs.reduce((n, m) => n + (anyMatch(m.text, rt[m.role]) ? 1 : 0), 0)}`
+      : "";
+    const l1 = `${sel ? "›" : " "} ${time} ${cwdTail}${hitBadge}`;
+    const snip = hasBody ? snippet(s.msgs, rt, lw) : undefined;
+    const l2 = snip !== undefined
+      ? `  ${highlight(snip.text, rt[snip.role], t)}`
+      : `  ${s.first}${s.name ? `  [${s.name}]` : ""}`;
+    if (sel) {
+      return [
+        t.bg("selectedBg", padEndVisible(t.fg("accent", truncateToWidth(l1, lw)), lw)),
+        t.bg("selectedBg", padEndVisible(truncateToWidth(l2, lw), lw)),
+      ];
+    }
+    return [padEndVisible(l1, lw), padEndVisible(t.fg("dim", truncateToWidth(l2, lw)), lw)];
+  }
+
   // 左栏，每个会话两行
   private buildList(height: number, lw: number): string[] {
-    const t = this.theme;
-    const rt = roleTerms(this.query().terms); // 排除词和 name: / cwd: 不在正文里高亮
-    const hasBody = rt.user.length > 0 || rt.assistant.length > 0;
+    const { rt, hasBody } = this.listTerms();
     const visible = Math.max(1, Math.floor(height / 2));
     if (this.selected < this.listOffset) this.listOffset = this.selected;
     if (this.selected >= this.listOffset + visible) {
@@ -389,26 +570,7 @@ export class PeekComponent implements Component, Focusable {
         rows.push(" ".repeat(lw), " ".repeat(lw));
         continue;
       }
-      const sel = idx === this.selected;
-      const time = fmtTime(s.time);
-      const cwdTail = s.cwd.replace(/\\/g, "/").split("/").slice(-2).join("/");
-      // 有正文关键词时显示命中的消息数
-      const hitBadge = hasBody
-        ? ` ·${s.msgs.reduce((n, m) => n + (anyMatch(m.text, rt[m.role]) ? 1 : 0), 0)}`
-        : "";
-      const l1 = `${sel ? "›" : " "} ${time} ${cwdTail}${hitBadge}`;
-      // 第二行：有正文关键词时显示命中片段，否则显示首条消息
-      const snip = hasBody ? snippet(s.msgs, rt, lw) : undefined;
-      const l2 = snip !== undefined
-        ? `  ${highlight(snip.text, rt[snip.role], t)}`
-        : `  ${s.first}${s.name ? `  [${s.name}]` : ""}`;
-      if (sel) {
-        rows.push(t.bg("selectedBg", padEndVisible(t.fg("accent", truncateToWidth(l1, lw)), lw)));
-        rows.push(t.bg("selectedBg", padEndVisible(truncateToWidth(l2, lw), lw)));
-      } else {
-        rows.push(padEndVisible(l1, lw));
-        rows.push(padEndVisible(t.fg("dim", truncateToWidth(l2, lw)), lw));
-      }
+      rows.push(...this.listRows(s, idx === this.selected, lw, rt, hasBody));
     }
     // 每项两行，height 是奇数时会少一行，补空行，否则最后一行右栏会顶到左边
     while (rows.length < height) rows.push(" ".repeat(lw));
@@ -581,17 +743,26 @@ export class PeekComponent implements Component, Focusable {
     if (this.previewLines.length > H) info += ` (${this.previewOffset + 1}-${end}/${this.previewLines.length})`;
     const scrollInfo = info ? t.fg("dim", info) : "";
 
+    const sel = this.activeSel();
     for (let i = 0; i < H; i++) {
-      const l = leftRows[i] ?? " ".repeat(lw);
+      let l = leftRows[i] ?? " ".repeat(lw);
       let r = rightRows[i] ?? "";
-      if (i === 0 && scrollInfo) {
-        r = truncateToWidth(r, Math.max(0, rw - visibleWidth(scrollInfo))) + scrollInfo;
+      const infoW = i === 0 && scrollInfo ? visibleWidth(scrollInfo) : 0;
+      if (infoW) r = truncateToWidth(r, Math.max(0, rw - infoW));
+      r = padEndVisible(r, rw - infoW) + (infoW ? scrollInfo : "");
+      // 拖选的高亮最后叠上去，反显整格；右栏第一行别盖到右上角的命中信息
+      if (sel?.pane === "list") {
+        const cols = rowColumns(sel, this.listOffset * 2 + i, l, lw);
+        if (cols) l = highlightColumns(l, cols[0], cols[1]);
+      } else if (sel?.pane === "preview") {
+        const cols = rowColumns(sel, this.previewOffset + i, r, rw - infoW);
+        if (cols) r = highlightColumns(r, cols[0], cols[1]);
       }
       // 左栏在 buildList 里已经 pad 到 lw，这里再 pad 会把带样式的行截坏
-      out.push(l + t.fg("borderMuted", " │ ") + padEndVisible(r, rw));
+      out.push(l + t.fg("borderMuted", " │ ") + r);
     }
 
-    // 底部：重命名和删除确认时换成对应的操作行
+    // 底部：重命名和删除确认时换成对应的操作行，复制结果和选区提示也在这里
     out.push(t.fg("borderMuted", "─".repeat(width)));
     if (this.renaming) {
       const prefix = msg("renamePrefix");
@@ -606,6 +777,11 @@ export class PeekComponent implements Component, Focusable {
           width,
         ),
       );
+    } else if (this.hint) {
+      out.push(truncateToWidth(t.fg(this.hint.ok ? "success" : "error", this.hint.text), width));
+    } else if (sel) {
+      const [s, e] = bounds(sel);
+      out.push(truncateToWidth(t.fg("warning", msg("selHint", { n: e.row - s.row + 1 })), width));
     } else {
       out.push(
         truncateToWidth(

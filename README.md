@@ -84,8 +84,10 @@ In TUI mode, run `/peek` and start typing. Press `Enter` on a session to continu
 | Wheel over the preview | Scroll the preview three lines per notch (`Alt` for five times faster) |
 | Click the scope label in the header | Toggle current directory tree ↔ all projects (same as `Tab`) |
 | Click the search box or the rename line | Move the cursor |
+| Drag inside a pane | Select text in that pane only. Dragging across the divider or past the edge keeps the selection in the pane where it started, and lines wrap within that pane. |
+| `Ctrl+C` with a selection | Copy it to the clipboard. Nothing is copied on release. Without a selection `Ctrl+C` closes as before; a click anywhere clears the selection. |
 
-Mouse reporting is switched on only while the picker is open and switched off when it closes, so the rest of pi is unaffected. While it is on, the terminal's own text selection and scrollback are unavailable; most terminals give them back while `Shift` is held. Set `PI_SESSION_PEEK_MOUSE=0` to keep the mouse off. In pi's fullscreen mode the picker uses pi's own mouse handling and the variable is ignored.
+Mouse reporting is switched on only while the picker is open and switched off when it closes, so the rest of pi is unaffected. While it is on, the terminal's own text selection and scrollback are unavailable; most terminals give them back while `Shift` is held, but that selection is the terminal's and spans both panes. Set `PI_SESSION_PEEK_MOUSE=0` to keep the mouse off. In pi's fullscreen mode the picker uses pi's own mouse handling and the variable is ignored.
 
 ## 🔎 Search syntax
 
@@ -138,6 +140,7 @@ pi-session-peek/
 │   ├── sessions.ts          # Scans and parses session JSONL, rename / delete helpers
 │   ├── query.ts             # Query parsing, highlighting, hit snippets
 │   ├── mouse.ts             # Mouse reporting for pi's regular (non-fullscreen) mode
+│   ├── selection.ts         # Pane-confined drag selection: ranges, highlight, text extraction
 │   ├── i18n.ts              # Chinese / English UI strings and locale detection
 │   └── text.ts              # Path, time and width helpers
 ├── scripts/screenshot.mjs   # Optional: renders a synthetic screenshot from component output
