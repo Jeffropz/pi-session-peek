@@ -130,6 +130,22 @@ npm run screenshot     # 可选：用合成渲染覆盖 docs/screenshot.png，�
 
 本地开发时把目录路径加到 `~/.pi/agent/settings.json` 的 `extensions` 里，或者直接放进 `~/.pi/agent/extensions/`，然后 `/reload`。
 
+### 发版
+
+推到 `main` 和提 PR 都会在 Ubuntu 和 Windows 上跑 `npm run check`（`.github/workflows/ci.yml`）。推一个 `vX.Y.Z` 的 tag 会触发 `.github/workflows/release.yml`：校验 tag 和 `package.json` 版本一致，再跑一遍检查，通过 [trusted publishing](https://docs.npmjs.com/trusted-publishers/) 发到 npm（不需要 token，自动附带 provenance），最后从 `CHANGELOG.md` 里对应版本的段落生成 GitHub Release。
+
+npm 侧需要一次性配置：包设置 → Trusted Publisher → GitHub Actions，填 owner `Jeffropz`、repository `pi-session-peek`、workflow filename `release.yml`。
+
+发一个版本：
+
+```bash
+# 1. 把 CHANGELOG.md 里 "## Unreleased" 下的条目挪到新版本号下面，提交
+# 2. 升版本号、提交、打 tag 一步完成（patch / minor / major）
+npm version patch -m "chore: release %s"
+# 3. 提交和 tag 一起推上去，剩下的交给 CI
+git push --follow-tags
+```
+
 ## 📄 许可证
 
 MIT，见 [`LICENSE`](./LICENSE)。

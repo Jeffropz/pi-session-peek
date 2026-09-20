@@ -130,6 +130,22 @@ npm run screenshot     # optional: overwrite docs/screenshot.png with a syntheti
 
 To load a local checkout, add its path under `extensions` in `~/.pi/agent/settings.json` or drop the folder into `~/.pi/agent/extensions/`, then `/reload`.
 
+### Releasing
+
+Every push to `main` and every pull request runs `npm run check` on Ubuntu and Windows (`.github/workflows/ci.yml`). Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`, which checks that the tag matches `package.json`, runs the checks again, publishes to npm through [trusted publishing](https://docs.npmjs.com/trusted-publishers/) (no token needed, provenance attached automatically) and creates a GitHub Release from the matching `CHANGELOG.md` section.
+
+One-time setup on npmjs.com: package settings → Trusted Publisher → GitHub Actions, with owner `Jeffropz`, repository `pi-session-peek`, workflow filename `release.yml`.
+
+To cut a release:
+
+```bash
+# 1. move the "## Unreleased" entries in CHANGELOG.md under the new version and commit
+# 2. bump the version, commit and tag in one go (patch / minor / major)
+npm version patch -m "chore: release %s"
+# 3. push the commit together with the tag; CI does the rest
+git push --follow-tags
+```
+
 ## 📄 License
 
 MIT. See [`LICENSE`](./LICENSE).

@@ -1,0 +1,60 @@
+# 发版流程：推一个 vX.Y.Z 的 tag 就会自动跑到这里
+#   1. 校验 tag 和 package.json 的版本号一致
+#   2. 用 OIDC（trusted publishing）发到 npm，不需要 NPM_TOKEN，公开仓库自动附带 provenance
+#      （publish 前 prepublishOnly 钩子会自动跑一遍 typecheck + test）
+#   3. 从 CHANGELOG.md 里截出这个版本的段落，建一个 GitHub Release
+# npm 侧需要一次性配置：包设置 → Trusted Publisher → GitHub Actions，
+# 填 owner=Jeffropz、repository=pi-session-peek、workflow filename=release.yml
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # 建 GitHub Release
+  id-token: write # npm trusted publishing 需要
+
+# 同一时刻只跑一个发布，避免连推多个 tag 时并发 publish
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22 # 和 CI 保持一致
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false # 发版不用缓存
+
+      # trusted publishing 要求 npm >= 11.5.1，Node 22 自带 npm 10，钉在 11 避免被未来大版本偷袭
+      - run: npm install -g npm@^11
+      - run: npm -v
+
+      - name: Tag must match package.json version
+        run: |
+          v="v$(node -p "require('./package.json').version")"
+          if [ "$v" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json ($v)"
+            exit 1
+          fi
+
+      - run: npm ci
+
+      # prepublishOnly 钩子（package.json）会在 publish 前自动跑 npm run check
+      - run: npm publish
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v v="${GITHUB_REF_NAME#v}" '/^## /{p = ($2 == v); next} p' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then echo "- see CHANGELOG.md" > notes.md; fi
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
