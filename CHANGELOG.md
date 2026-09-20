@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - Ctrl+D now prefers the system trash on every platform instead of only the `trash` CLI: Windows Recycle Bin via PowerShell, Finder on macOS, `gio trash` / `trash-put` on Linux. The file is deleted permanently only when none of them works, and the notification says which one happened.
 
