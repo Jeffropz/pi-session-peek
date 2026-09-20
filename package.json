@@ -40,6 +40,8 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "check": "npm run typecheck && npm test",
     "screenshot": "node --import tsx scripts/screenshot.mjs",
+    "preversion": "node scripts/release-changelog.mjs --check && npm run check",
+    "version": "node scripts/release-changelog.mjs",
     "prepublishOnly": "npm run check"
   },
   "peerDependencies": {

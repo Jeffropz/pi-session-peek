@@ -139,12 +139,14 @@ npm 侧需要一次性配置：包设置 → Trusted Publisher → GitHub Action
 发一个版本：
 
 ```bash
-# 1. 把 CHANGELOG.md 里 "## Unreleased" 下的条目挪到新版本号下面，提交
-# 2. 升版本号、提交、打 tag 一步完成（patch / minor / major）
-npm version patch -m "chore: release %s"
+# 1. 确认这版的更新说明已经写在 CHANGELOG.md 的 "## Unreleased" 下面（提没提交都行）
+# 2. 升版本号（patch / minor / major）
+npm version patch
 # 3. 提交和 tag 一起推上去，剩下的交给 CI
 git push --follow-tags
 ```
+
+`npm version` 会跑 `package.json` 里声明的钩子：`preversion` 先确认 `CHANGELOG.md` 里有非空的 `## Unreleased` 段落，再跑 `npm run check`，任一不通过就在改动任何文件之前中止；`version` 跑 `scripts/release-changelog.mjs`，把 `## Unreleased` 改成新版本号并 `git add`。然后 npm 把 `package.json`、lockfile 和 `CHANGELOG.md` 一起提交成 `chore: release X.Y.Z`（提交信息定义在 `.npmrc`），并打上 `vX.Y.Z` 的 tag。
 
 ## 📄 许可证
 

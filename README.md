@@ -139,12 +139,14 @@ One-time setup on npmjs.com: package settings → Trusted Publisher → GitHub A
 To cut a release:
 
 ```bash
-# 1. move the "## Unreleased" entries in CHANGELOG.md under the new version and commit
-# 2. bump the version, commit and tag in one go (patch / minor / major)
-npm version patch -m "chore: release %s"
+# 1. make sure the release notes are under "## Unreleased" in CHANGELOG.md (committed or not)
+# 2. bump the version (patch / minor / major)
+npm version patch
 # 3. push the commit together with the tag; CI does the rest
 git push --follow-tags
 ```
+
+`npm version` runs the hooks declared in `package.json`: `preversion` checks that `CHANGELOG.md` has a non-empty `## Unreleased` section and runs `npm run check`, aborting the bump before anything is touched if either fails; `version` runs `scripts/release-changelog.mjs`, which renames `## Unreleased` to the new version and stages the file. npm then commits `package.json`, the lockfile and `CHANGELOG.md` as `chore: release X.Y.Z` (message set in `.npmrc`) and tags it `vX.Y.Z`.
 
 ## 📄 License
 
