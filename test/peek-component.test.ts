@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { setCapabilities, visibleWidth } from "@earendil-works/pi-tui";
 import { setLang } from "../src/i18n.ts";
 import { PeekComponent } from "../src/peek-component.ts";
 import type { PeekSession } from "../src/sessions.ts";
 import { mdTheme, strip, theme } from "./helpers.ts";
 
 setLang("zh");
+// Markdown 只在检测到终端支持时才输出 OSC 8 超链接；CI 没有任何终端环境变量会走纯文本回退，
+// 这里把能力固定住，让预览渲染在所有环境下一致
+setCapabilities({ images: null, trueColor: true, hyperlinks: true });
 
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
