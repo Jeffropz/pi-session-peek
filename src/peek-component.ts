@@ -10,7 +10,7 @@ import {
   type MarkdownTheme,
 } from "@earendil-works/pi-tui";
 import { msg } from "./i18n.ts";
-import { anyKw, highlight, kwRegExps, lineHasKw, matchesSession, parseQuery, snippet, type ParsedQuery } from "./query.ts";
+import { anyMatch, highlight, lineHasMatch, matchesSession, parseQuery, roleTerms, snippet, type ParsedQuery } from "./query.ts";
 import type { PeekMsg, PeekSession } from "./sessions.ts";
 import { fmtTime, normPath, padEndVisible } from "./text.ts";
 
@@ -86,14 +86,11 @@ export class PeekComponent implements Component, Focusable {
   // keepSelection：尽量保持原来选中的会话，重命名后用
   private refilter(keepSelection = false): void {
     const prev = keepSelection ? this.filtered[this.selected] : undefined;
-    const { kws, since } = this.query();
+    const { terms, since } = this.query();
     let out = this.all;
     if (this.scope === "current") out = out.filter((s) => this.inCurrentTree(s));
     if (since) out = out.filter((s) => s.mtime >= since);
-    if (kws.length) {
-      const res = kwRegExps(kws);
-      out = out.filter((s) => matchesSession(s, res));
-    }
+    if (terms.length) out = out.filter((s) => matchesSession(s, terms));
     this.filtered = out;
     const idx = prev ? out.indexOf(prev) : -1;
     this.selected = idx >= 0 ? idx : keepSelection ? Math.min(this.selected, Math.max(0, out.length - 1)) : 0;
@@ -274,7 +271,8 @@ export class PeekComponent implements Component, Focusable {
   // 左栏，每个会话两行
   private buildList(height: number, lw: number): string[] {
     const t = this.theme;
-    const { kws } = this.query();
+    const rt = roleTerms(this.query().terms); // 排除词和 name: / cwd: 不在正文里高亮
+    const hasBody = rt.user.length > 0 || rt.assistant.length > 0;
     const visible = Math.max(1, Math.floor(height / 2));
     if (this.selected < this.listOffset) this.listOffset = this.selected;
     if (this.selected >= this.listOffset + visible) {
@@ -292,15 +290,15 @@ export class PeekComponent implements Component, Focusable {
       const sel = idx === this.selected;
       const time = fmtTime(s.time);
       const cwdTail = s.cwd.replace(/\\/g, "/").split("/").slice(-2).join("/");
-      // 有关键词时显示命中的消息数
-      const hitBadge = kws.length
-        ? ` ·${s.msgs.reduce((n, m) => n + (anyKw(m.text.toLowerCase(), kws) ? 1 : 0), 0)}`
+      // 有正文关键词时显示命中的消息数
+      const hitBadge = hasBody
+        ? ` ·${s.msgs.reduce((n, m) => n + (anyMatch(m.text, rt[m.role]) ? 1 : 0), 0)}`
         : "";
       const l1 = `${sel ? "›" : " "} ${time} ${cwdTail}${hitBadge}`;
-      // 第二行：有关键词时显示命中片段，否则显示首条消息
-      const snip = snippet(s.msgs, kws, lw);
+      // 第二行：有正文关键词时显示命中片段，否则显示首条消息
+      const snip = hasBody ? snippet(s.msgs, rt, lw) : undefined;
       const l2 = snip !== undefined
-        ? `  ${highlight(snip, kws, t)}`
+        ? `  ${highlight(snip.text, rt[snip.role], t)}`
         : `  ${s.first}${s.name ? `  [${s.name}]` : ""}`;
       if (sel) {
         rows.push(t.bg("selectedBg", padEndVisible(t.fg("accent", truncateToWidth(l1, lw)), lw)));
@@ -361,7 +359,8 @@ export class PeekComponent implements Component, Focusable {
     );
     lines.push("");
 
-    const { kws } = this.query();
+    const rt = roleTerms(this.query().terms);
+    const hasBody = rt.user.length > 0 || rt.assistant.length > 0;
     const MAX_MSGS = 500;
     const truncated = s.msgs.length > MAX_MSGS;
     const msgs = truncated ? s.msgs.slice(-MAX_MSGS) : s.msgs;
@@ -369,8 +368,8 @@ export class PeekComponent implements Component, Focusable {
       lines.push(t.fg("dim", msg("truncated", { n: MAX_MSGS })));
       lines.push("");
     }
-    if (kws.length && !msgs.some((m) => anyKw(m.text.toLowerCase(), kws))) {
-      const inTruncated = truncated && s.msgs.some((m) => anyKw(m.text.toLowerCase(), kws));
+    if (hasBody && !msgs.some((m) => anyMatch(m.text, rt[m.role]))) {
+      const inTruncated = truncated && s.msgs.some((m) => anyMatch(m.text, rt[m.role]));
       lines.push(
         t.fg(
           "warning",
@@ -387,7 +386,8 @@ export class PeekComponent implements Component, Focusable {
     };
 
     for (const m of msgs) {
-      const isMatch = kws.length > 0 && anyKw(m.text.toLowerCase(), kws);
+      const terms = rt[m.role]; // user: 的词只在用户消息里高亮，ai: 的只在 AI 回复里
+      const isMatch = terms.length > 0 && anyMatch(m.text, terms);
       const head = lines.length;
       if (m.role === "user") {
         lines.push(
@@ -399,8 +399,8 @@ export class PeekComponent implements Component, Focusable {
       // 先渲染再高亮：往 markdown 源码里插转义码会把链接、代码块的语法弄坏
       const before = this.matchLines.length;
       for (const l of this.renderMsg(m, rw)) {
-        if (isMatch && lineHasKw(l, kws)) this.matchLines.push(lines.length);
-        lines.push(isMatch ? highlight(l, kws, t) : l);
+        if (isMatch && lineHasMatch(l, terms)) this.matchLines.push(lines.length);
+        lines.push(isMatch ? highlight(l, terms, t) : l);
       }
       // 关键词被折行拆开时哪一行都找不到，退回到消息标题行，别把这条消息漏掉
       if (isMatch && this.matchLines.length === before) this.matchLines.push(head);

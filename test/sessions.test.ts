@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { kwRegExps, matchesSession } from "../src/query.ts";
+import { matchesSession, parseQuery } from "../src/query.ts";
 import { deleteSession, renameSession, scanSessions, trashCommands, type PeekSession } from "../src/sessions.ts";
 
 let agentDir: string;
@@ -35,9 +35,9 @@ function session(file: string, opts: { cwd: string; time: string; name?: string;
   return p;
 }
 
-// 以前的 searchText 现在由 matchesSession 现算
+// 以前的 searchText 现在由 matchesSession 现算；引号包起来当一个短语搜
 function hits(s: PeekSession, kw: string): boolean {
-  return matchesSession(s, kwRegExps([kw.toLowerCase()]));
+  return matchesSession(s, parseQuery(`"${kw}"`).terms);
 }
 
 before(() => {

@@ -14,6 +14,7 @@
 - 右栏用 pi 自己的 Markdown 渲染器画，标题、带语法高亮的代码块、表格、列表和主界面里的对话一个样子。
 - 边打字边过滤，搜的是对话正文、会话名和工作目录。工具调用的参数和结果不进索引，所以只会命中真正讨论过这个词的会话。
 - 空格分隔多个关键词，全部命中才显示；列表里直接显示第一个命中处的片段。
+- 支持 `"精确短语"`、`a|b` 任一命中、`-排除`、`name:` / `dir:` / `user:` / `ai:` 限定范围，以及 `/正则/`。
 - `@7d`、`@24h`、`@2w`、`@1m` 只看最近活动过的会话。
 - 预览里所有命中都高亮，`Ctrl+N` / `Ctrl+P` 在命中间跳。
 - `Enter` 进入会话，`Ctrl+O` 分叉成新会话，`Ctrl+R` 重命名，`Ctrl+D` 删除。
@@ -58,7 +59,7 @@ pi 扩展以你的用户权限运行，只装信得过的包。
 
 | 按键 | 作用 |
 | --- | --- |
-| 打字 | 过滤。空格分隔的词都要命中；`@7d` 等限定时间。 |
+| 打字 | 过滤。空格分隔的词都要命中；短语、`-排除`、前缀、正则和 `@7d` 见[搜索语法](#-搜索语法)。 |
 | `Tab` | 当前目录树 ↔ 全部项目 |
 | `↑` `↓` | 选会话 |
 | `PgUp` `PgDn` | 预览翻页 |
@@ -73,13 +74,21 @@ pi 扩展以你的用户权限运行，只装信得过的包。
 
 ## 🔎 搜索语法
 
-大小写不敏感，匹配文本中任意位置。
+大小写不敏感，匹配文本中任意位置。空白分隔多个词，每个词都要满足。
 
 | 输入 | 含义 |
 | --- | --- |
-| `token undefined` | 同时包含 `token` 和 `undefined` 的会话 |
+| `token undefined` | 同时包含 `token` 和 `undefined` 的会话，顺序不限，可以在不同的消息里 |
+| `"token undefined"` | 精确短语。引号里的空白可以匹配正文里的任意一段空白，包括换行 |
+| `vue\|react` | 包含 `vue` 或 `react` 的会话 |
+| `-draft` | 哪里都不含 `draft` 的会话（消息、会话名、目录都算） |
+| `name:auth` | 只在会话名里找。`dir:` 或 `cwd:` 只看工作目录 |
+| `user:deploy` | 只看你发的消息。`ai:` 或 `assistant:` 只看回复 |
+| `/\bfoo\d+\b/` | JavaScript 正则，大小写不敏感，`^` 和 `$` 匹配行首行尾。空格用 `\s` 代替 |
 | `@7d` | 最近 7 天活动过的会话。单位：`h` 小时、`d` 天、`w` 周、`m` 月（按 30 天算） |
-| `token @2w` | 两者组合 |
+| `-user:"not now" ai:/todo\|fixme/ @2w` | 前缀可以叠加，所有条件一起组合 |
+
+引号是万能转义：`"-foo"`、`"a|b"`、`"name:x"`、`"/x/"` 都按字面搜这些字符。正则写错了就当普通文字搜。预览里只高亮正向的词，`name:` / `dir:` 的词不碰对话正文，所以只输入 `name:auth` 时右栏显示完整对话、没有高亮。
 
 索引里有用户和助手的消息、会话名、工作目录。没有工具调用的参数和结果。
 
@@ -139,14 +148,15 @@ npm 侧需要一次性配置：包设置 → Trusted Publisher → GitHub Action
 发一个版本：
 
 ```bash
-# 1. 确认这版的更新说明已经写在 CHANGELOG.md 的 "## Unreleased" 下面（提没提交都行）
+# 1. 把这版的更新说明写在 CHANGELOG.md 的 "## Unreleased" 下面，并提交
+#    （npm version 遇到已跟踪文件有未提交改动会直接拒绝）
 # 2. 升版本号（patch / minor / major）
 npm version patch
 # 3. 提交和 tag 一起推上去，剩下的交给 CI
 git push --follow-tags
 ```
 
-`npm version` 会跑 `package.json` 里声明的钩子：`preversion` 先确认 `CHANGELOG.md` 里有非空的 `## Unreleased` 段落，再跑 `npm run check`，任一不通过就在改动任何文件之前中止；`version` 跑 `scripts/release-changelog.mjs`，把 `## Unreleased` 改成新版本号并 `git add`。然后 npm 把 `package.json`、lockfile 和 `CHANGELOG.md` 一起提交成 `chore: release X.Y.Z`（提交信息定义在 `.npmrc`），并打上 `vX.Y.Z` 的 tag。
+`npm version` 一上来先检查 git 工作区是否干净，不干净就报 `Git working directory not clean.` 退出，所以 `CHANGELOG.md` 在内的所有改动都要先提交（未跟踪的文件不影响）。然后才跑 `package.json` 里声明的钩子：`preversion` 先确认 `CHANGELOG.md` 里有非空的 `## Unreleased` 段落，再跑 `npm run check`，任一不通过就在改动任何文件之前中止；`version` 跑 `scripts/release-changelog.mjs`，把 `## Unreleased` 改成新版本号并 `git add`。然后 npm 把 `package.json`、lockfile 和 `CHANGELOG.md` 一起提交成 `chore: release X.Y.Z`（提交信息定义在 `.npmrc`），并打上 `vX.Y.Z` 的 tag。
 
 ## 📄 许可证
 

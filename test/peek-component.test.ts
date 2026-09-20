@@ -435,3 +435,67 @@ test("主体高度为奇数时，最后一行的分隔线仍在同一列（右�
     Object.defineProperty(process.stdout, "rows", { value: saved, configurable: true, writable: true });
   }
 });
+
+// 搜索语法在组件里的整体效果：过滤、命中数、片段、高亮都按同一套规则
+function cwds(q: string, all = fixture()): string[] {
+  const c = make(all, "D:/nowhere");
+  type(c, q);
+  return c.filtered.map((s: PeekSession) => s.cwd);
+}
+
+test("搜索语法：短语、OR、排除、字段前缀、正则都能过滤", () => {
+  assert.deepEqual(cwds('"alpha beta"'), ["D:/proj"]); // "beta alpha" 顺序不对，不算
+  assert.deepEqual(cwds("alpha -beta"), ["D:/proj/packages/web"]);
+  assert.deepEqual(cwds("gamma|only"), ["D:/proj/packages/web", "D:/projX"]);
+  assert.deepEqual(cwds("name:other"), ["D:/other"]);
+  assert.deepEqual(cwds("dir:projx"), ["D:/projX"]);
+  assert.deepEqual(cwds("ai:reply"), ["D:/proj"]);
+  assert.deepEqual(cwds("user:reply"), []);
+  assert.deepEqual(cwds("/alph[a]\\s+(beta|only)/"), ["D:/proj", "D:/proj/packages/web"]);
+  assert.deepEqual(cwds("-ai:reply -gamma @30d"), ["D:/proj/packages/web"]);
+});
+
+test("只有排除词或 name: / dir: 时列表不显示命中数和片段，预览不高亮也不提示", () => {
+  const c = make(fixture(), "D:/nowhere");
+  type(c, "-gamma name:other");
+  assert.deepEqual(c.filtered.map((s: PeekSession) => s.cwd), ["D:/other"]);
+  const rows = c.render(120).map(strip);
+  assert.ok(!/·\d/.test(rows[3]), rows[3]);
+  assert.ok(rows[4].includes("beta alpha  [other-name]"), rows[4]);
+  assert.equal(c.matchLines.length, 0);
+  assert.ok(!rows.join("\n").includes("对话正文无匹配"));
+});
+
+test("ai: 的词只在 AI 回复里计数、截片段和高亮，user: 同理", () => {
+  const all = [mk("D:/proj", ["alpha asks", "alpha answers", "alpha again"], 1)];
+  const c = make(all, "D:/proj");
+  type(c, "ai:alpha");
+  let rows = c.render(120);
+  assert.ok(strip(rows[3]).includes("·1"), strip(rows[3]));
+  assert.ok(strip(rows[4]).includes("alpha answers"), strip(rows[4]));
+  assert.ok(rows[4].includes("\x1b[1m\x1b[4m"), "snippet is highlighted");
+  const hit = c.previewLines.filter((l: string) => l.includes("\x1b[1m\x1b[4m")).map((l: string) => strip(l).trim());
+  assert.deepEqual(hit, ["alpha answers"]);
+  assert.equal(c.matchLines.length, 1);
+
+  c.input.setValue("user:alpha");
+  c.refilter();
+  c.invalidate();
+  rows = c.render(120);
+  assert.ok(strip(rows[3]).includes("·2"), strip(rows[3]));
+  assert.deepEqual(
+    c.previewLines.filter((l: string) => l.includes("\x1b[1m\x1b[4m")).map((l: string) => strip(l).trim()),
+    ["alpha asks", "alpha again"],
+  );
+});
+
+test("短语和正则在预览里整段高亮，排除词不高亮", () => {
+  const all = [mk("D:/proj", ["find the get http value", "getHttpValue is here, draft"], 1)];
+  const c = make(all, "D:/proj");
+  type(c, '"get http" /gethttp\\w+/ -zzz');
+  c.render(120);
+  const hit = c.previewLines.filter((l: string) => l.includes("\x1b[1m\x1b[4m"));
+  assert.equal(hit.length, 2);
+  assert.ok(hit[0].includes(`\x1b[1m\x1b[4mget http\x1b[24m`), hit[0]);
+  assert.ok(hit[1].includes(`\x1b[1m\x1b[4mgetHttpValue\x1b[24m`), hit[1]);
+});

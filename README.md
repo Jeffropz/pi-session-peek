@@ -14,6 +14,7 @@ Search your [pi](https://pi.dev) session history by what was actually said, read
 - Renders the conversation with pi's own Markdown renderer, so headings, code blocks with syntax highlighting, tables and lists look the same as in the main transcript.
 - Filters as you type across conversation text, session name and working directory. Tool call arguments and results are excluded, so a keyword only matches sessions that actually discussed it.
 - Requires every space-separated keyword to match, and shows a snippet around the first hit in the list.
+- Understands `"exact phrases"`, `either|or`, `-exclude`, `name:` / `dir:` / `user:` / `ai:` prefixes and `/regex/`.
 - Limits results to recently active sessions with `@7d`, `@24h`, `@2w` or `@1m`.
 - Highlights every hit in the preview and jumps between them with `Ctrl+N` / `Ctrl+P`.
 - Resumes with `Enter`, forks into a new session with `Ctrl+O`, renames with `Ctrl+R`, deletes with `Ctrl+D`.
@@ -58,7 +59,7 @@ In TUI mode, run `/peek` and start typing. Press `Enter` on a session to continu
 
 | Key | Action |
 | --- | --- |
-| type | Filter. Space-separated words must all match; `@7d` and friends limit by time. |
+| type | Filter. Space-separated words must all match; see [Search syntax](#-search-syntax) for phrases, `-exclude`, prefixes, regex and `@7d`. |
 | `Tab` | Current directory tree ↔ all projects |
 | `↑` `↓` | Select session |
 | `PgUp` `PgDn` | Scroll preview by a page |
@@ -73,13 +74,21 @@ In TUI mode, run `/peek` and start typing. Press `Enter` on a session to continu
 
 ## 🔎 Search syntax
 
-The filter is case-insensitive and matches anywhere in the text.
+The filter is case-insensitive and matches anywhere in the text. Whitespace separates terms, and every term must be satisfied.
 
 | Input | Meaning |
 | --- | --- |
-| `token undefined` | Sessions containing both `token` and `undefined` |
+| `token undefined` | Sessions containing both `token` and `undefined`, in any order and any message |
+| `"token undefined"` | The exact phrase. Whitespace inside the quotes matches any run of whitespace, including a line break. |
+| `vue\|react` | Sessions containing `vue` or `react` |
+| `-draft` | Sessions that do not contain `draft` anywhere (messages, name or directory) |
+| `name:auth` | Session name only. `dir:` or `cwd:` for the working directory. |
+| `user:deploy` | Only the messages you wrote. `ai:` or `assistant:` for the replies. |
+| `/\bfoo\d+\b/` | JavaScript regular expression, case-insensitive, `^` and `$` match line boundaries. Use `\s` instead of a space. |
 | `@7d` | Sessions active in the last 7 days. Units: `h`, `d`, `w`, `m` (30 days). |
-| `token @2w` | Both combined |
+| `-user:"not now" ai:/todo\|fixme/ @2w` | Prefixes stack, and everything combines |
+
+Quotes are the escape hatch: `"-foo"`, `"a|b"`, `"name:x"` and `"/x/"` search for those characters literally. A regex that fails to compile is searched as plain text. Only positive terms are highlighted in the preview, and `name:` / `dir:` terms never touch the conversation, so `name:auth` alone shows the full conversation with no highlights.
 
 The search index holds user and assistant messages, the session name and the working directory. It does not hold tool call arguments or tool results.
 
@@ -139,14 +148,15 @@ One-time setup on npmjs.com: package settings → Trusted Publisher → GitHub A
 To cut a release:
 
 ```bash
-# 1. make sure the release notes are under "## Unreleased" in CHANGELOG.md (committed or not)
+# 1. write the release notes under "## Unreleased" in CHANGELOG.md and commit them
+#    (npm version refuses to run with uncommitted changes to tracked files)
 # 2. bump the version (patch / minor / major)
 npm version patch
 # 3. push the commit together with the tag; CI does the rest
 git push --follow-tags
 ```
 
-`npm version` runs the hooks declared in `package.json`: `preversion` checks that `CHANGELOG.md` has a non-empty `## Unreleased` section and runs `npm run check`, aborting the bump before anything is touched if either fails; `version` runs `scripts/release-changelog.mjs`, which renames `## Unreleased` to the new version and stages the file. npm then commits `package.json`, the lockfile and `CHANGELOG.md` as `chore: release X.Y.Z` (message set in `.npmrc`) and tags it `vX.Y.Z`.
+`npm version` first checks that the working tree is clean and stops with `Git working directory not clean.` otherwise, so everything, including `CHANGELOG.md`, has to be committed before the bump. Untracked files are fine. It then runs the hooks declared in `package.json`: `preversion` checks that `CHANGELOG.md` has a non-empty `## Unreleased` section and runs `npm run check`, aborting the bump before anything is touched if either fails; `version` runs `scripts/release-changelog.mjs`, which renames `## Unreleased` to the new version and stages the file. npm then commits `package.json`, the lockfile and `CHANGELOG.md` as `chore: release X.Y.Z` (message set in `.npmrc`) and tags it `vX.Y.Z`.
 
 ## 📄 License
 
