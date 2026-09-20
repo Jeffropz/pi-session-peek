@@ -1,6 +1,7 @@
 import { getMarkdownTheme, SessionManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { basename } from "node:path";
 import { msg } from "./src/i18n.ts";
+import { attachMouse } from "./src/mouse.ts";
 import { PeekComponent } from "./src/peek-component.ts";
 import { deleteSession, renameSession, scanSessions, type PeekSession } from "./src/sessions.ts";
 
@@ -65,6 +66,9 @@ export default function (pi: ExtensionAPI) {
       const picked = await ctx.ui.custom<Picked>((tui, theme, _kb, done) => {
         const comp = new PeekComponent(all, ctx.cwd, theme, getMarkdownTheme(), process.stdout.rows || 24, initial);
         comp.requestRender = () => tui.requestRender();
+        // 常规模式 pi 不开鼠标，自己开；全屏模式 pi-tui 会直接调 comp.handleMouse
+        const mouse = attachMouse(comp, tui);
+        comp.dispose = () => mouse.dispose();
         comp.onResume = (s) => {
           lastQuery = comp.getQuery();
           done({ s, action: "resume" });

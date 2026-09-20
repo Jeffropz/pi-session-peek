@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Mouse support in both panes. Click a session to select it, double-click to resume, wheel over the list to move the selection, wheel over the preview to scroll it (`Alt` for five times faster), click the scope label to toggle it, click the search box or rename line to move the cursor. Pi only enables mouse reporting in fullscreen mode, so in the regular mode the picker turns it on itself while open and locates itself on screen with a cursor position query; the terminal's own text selection is unavailable meanwhile (usually `Shift` restores it). `PI_SESSION_PEEK_MOUSE=0` disables it.
+
 ## 0.4.1
 
 - `Ctrl+T` shows tool calls in the preview: one dim line per call with the tool name and its main argument (command, path, URL, query…), placed under the reply that made it. Off by default. Tool results are still not stored, and the tool lines are never searched or highlighted.

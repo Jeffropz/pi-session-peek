@@ -74,6 +74,19 @@ In TUI mode, run `/peek` and start typing. Press `Enter` on a session to continu
 | `Ctrl+D` | Delete, confirmed with `y` or `Enter`. Moves the file to the system trash whenever one is available (`trash` CLI, then the Windows Recycle Bin via PowerShell, Finder on macOS, `gio trash` / `trash-put` on Linux). Deletes permanently only if none of those work. |
 | `Esc` `Ctrl+C` | Close |
 
+## 🖱️ Mouse
+
+| Action | Effect |
+| --- | --- |
+| Click a session in the list | Select it |
+| Double-click a session | Resume it (same as `Enter`) |
+| Wheel over the list | Move the selection |
+| Wheel over the preview | Scroll the preview three lines per notch (`Alt` for five times faster) |
+| Click the scope label in the header | Toggle current directory tree ↔ all projects (same as `Tab`) |
+| Click the search box or the rename line | Move the cursor |
+
+Mouse reporting is switched on only while the picker is open and switched off when it closes, so the rest of pi is unaffected. While it is on, the terminal's own text selection and scrollback are unavailable; most terminals give them back while `Shift` is held. Set `PI_SESSION_PEEK_MOUSE=0` to keep the mouse off. In pi's fullscreen mode the picker uses pi's own mouse handling and the variable is ignored.
+
 ## 🔎 Search syntax
 
 The filter is case-insensitive and matches anywhere in the text. Whitespace separates terms, and every term must be satisfied.
@@ -110,7 +123,7 @@ On Windows PowerShell: `$env:PI_SESSION_PEEK_LANG = "en"` before starting pi. Th
 ## 🚧 Limitations
 
 - TUI mode only.
-- No mouse support. Pi only enables mouse input in its experimental fullscreen mode, and this picker does not handle it yet.
+- The mouse needs a terminal that supports SGR mouse reporting and the cursor position report (`CSI 6 n`). Windows Terminal, iTerm2, kitty, WezTerm, Alacritty, GNOME Terminal and VS Code all do; the legacy Windows console does not.
 - The preview shows the last 500 messages of very long sessions. Hits in earlier messages are still counted and announced.
 - `pi --peek` without a value is rejected by pi at startup. Use `pi --rp` to open without a keyword.
 - Only sessions under `~/.pi/agent/sessions` (or `$PI_CODING_AGENT_DIR/sessions`) are scanned.
@@ -124,6 +137,7 @@ pi-session-peek/
 │   ├── peek-component.ts    # The two-pane TUI component
 │   ├── sessions.ts          # Scans and parses session JSONL, rename / delete helpers
 │   ├── query.ts             # Query parsing, highlighting, hit snippets
+│   ├── mouse.ts             # Mouse reporting for pi's regular (non-fullscreen) mode
 │   ├── i18n.ts              # Chinese / English UI strings and locale detection
 │   └── text.ts              # Path, time and width helpers
 ├── scripts/screenshot.mjs   # Optional: renders a synthetic screenshot from component output

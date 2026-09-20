@@ -74,6 +74,19 @@ pi 扩展以你的用户权限运行，只装信得过的包。
 | `Ctrl+D` | 删除，按 `y` 或 `Enter` 确认。只要系统有回收站就优先进回收站（`trash` 命令、Windows 用 PowerShell 进回收站、macOS 用 Finder、Linux 用 `gio trash` / `trash-put`），全都不可用才直接删文件。 |
 | `Esc` `Ctrl+C` | 关闭 |
 
+## 🖱️ 鼠标
+
+| 操作 | 作用 |
+| --- | --- |
+| 点列表里的会话 | 选中 |
+| 双击会话 | 进入，和 `Enter` 一样 |
+| 在列表上滚滚轮 | 换选中项 |
+| 在预览上滚滚轮 | 预览每格滚三行，按住 `Alt` 快五倍 |
+| 点头部的范围字样 | 当前目录树 ↔ 全部项目，和 `Tab` 一样 |
+| 点搜索框或改名行 | 移动光标 |
+
+鼠标上报只在选择器打开时开、关闭时关，pi 的其他界面不受影响。开着的时候终端自带的选文字和滚回看历史不能用，多数终端按住 `Shift` 可以照旧。不想要鼠标就设 `PI_SESSION_PEEK_MOUSE=0`。pi 的全屏模式下走 pi 自己的鼠标分发，这个变量不起作用。
+
 ## 🔎 搜索语法
 
 大小写不敏感，匹配文本中任意位置。空白分隔多个词，每个词都要满足。
@@ -110,7 +123,7 @@ Windows PowerShell 里先执行 `$env:PI_SESSION_PEEK_LANG = "en"` 再启动 pi�
 ## 🚧 限制
 
 - 只支持 TUI 模式。
-- 不支持鼠标。pi 只在实验性的全屏模式里开鼠标，这个选择器还没处理鼠标事件。
+- 鼠标需要终端支持 SGR 鼠标上报和光标位置回报（`CSI 6 n`）。Windows Terminal、iTerm2、kitty、WezTerm、Alacritty、GNOME Terminal、VS Code 都支持，老式 Windows 控制台不支持。
 - 特别长的会话预览只显示最后 500 条消息，更早的命中仍会计数并提示。
 - `pi --peek` 不带值会被 pi 在启动时拒绝，不带关键词请用 `pi --rp`。
 - 只扫描 `~/.pi/agent/sessions`（或 `$PI_CODING_AGENT_DIR/sessions`）下的会话。
@@ -124,6 +137,7 @@ pi-session-peek/
 │   ├── peek-component.ts    # 双栏 TUI 组件
 │   ├── sessions.ts          # 扫描解析会话 JSONL，重命名 / 删除
 │   ├── query.ts             # 查询解析、高亮、命中片段
+│   ├── mouse.ts             # 常规（非全屏）模式下的鼠标上报
 │   ├── i18n.ts              # 中英文界面文案和语言检测
 │   └── text.ts              # 路径、时间、宽度工具
 ├── scripts/screenshot.mjs   # 可选：用组件渲染输出生成一张合成截图

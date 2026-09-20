@@ -8,6 +8,8 @@ import {
   type Component,
   type Focusable,
   type MarkdownTheme,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import { msg } from "./i18n.ts";
 import { anyMatch, highlight, lineHasMatch, matchesSession, parseQuery, roleTerms, snippet, type ParsedQuery } from "./query.ts";
@@ -15,6 +17,9 @@ import type { PeekMsg, PeekSession } from "./sessions.ts";
 import { fmtTime, normPath, padEndVisible } from "./text.ts";
 
 // 双栏选择器。文件操作（删除 / 重命名 / 分叉）不在这里做，由 index.ts 通过回调注入
+
+const BODY_TOP = 3; // 头部、搜索框、分隔线之后才是双栏主体
+const WHEEL_LINES = 3; // 滚轮每格滚几行预览，和 Shift+↑↓ 一样
 
 export class PeekComponent implements Component, Focusable {
   private input: Input;
@@ -33,6 +38,8 @@ export class PeekComponent implements Component, Focusable {
   private renameInput: Input;
   private cachedWidth = -1;
   private cachedLines: string[] = [];
+  private layout = { lw: 0, rw: 0, H: 0 }; // 最近一次 render 的分栏尺寸，鼠标定位用
+  private scopeSpan: [number, number] = [0, 0]; // 头部"范围"字样占的列区间，点击切换范围
   private _focused = false;
 
   // 由 index.ts 注入
@@ -42,6 +49,8 @@ export class PeekComponent implements Component, Focusable {
   onDelete?: (s: PeekSession) => Promise<boolean>;
   onRename?: (s: PeekSession, name: string) => Promise<boolean>;
   requestRender?: () => void; // 异步操作完成后让 TUI 重画
+  afterRender?: () => void; // 每次 render 之后调用；常规模式的鼠标桥接靠它重新测组件在屏幕上的位置
+  dispose?: () => void; // 关闭时由 pi 调用
 
   constructor(
     private all: PeekSession[],
@@ -256,6 +265,92 @@ export class PeekComponent implements Component, Focusable {
     this.invalidate();
   }
 
+  // 硬件光标在组件内的行号：搜索框在第 1 行，改名时在最后一行。常规模式的鼠标桥接靠它算组件顶行
+  cursorRow(): number | undefined {
+    if (!this._focused || !this.layout.H) return undefined;
+    return this.renaming ? BODY_TOP + this.layout.H + 1 : 1;
+  }
+
+  // 鼠标：左栏按下选中、双击进入、滚轮换选中项；右栏滚轮滚预览；点头部"范围"切换；点输入框移光标。
+  // 全屏模式由 pi-tui 按布局直接调，常规模式由 mouse.ts 换算成组件内坐标后调。坐标以组件左上角为原点
+  handleMouse(ev: TuiMouseEvent): TuiMouseEventResult | undefined {
+    const { lw, H } = this.layout;
+    if (!H) return undefined; // 还没画过，不知道分栏在哪
+    const inList = ev.x < lw;
+    const bodyRow = ev.y - BODY_TOP;
+    const inBody = bodyRow >= 0 && bodyRow < H;
+    const itemAt = (): number => (inList && inBody ? this.listOffset + (bodyRow >> 1) : -1); // 每项两行
+
+    if (ev.type === "wheel") {
+      const delta = ev.wheelDelta ?? 0;
+      if (!delta) return undefined;
+      let changed = this.confirmingDelete; // 和按键一样，滚一下就算取消确认，免得删错换过去的那条
+      this.confirmingDelete = false;
+      if (inList) {
+        if (!this.renaming) {
+          // 改名中换了会话就改错对象了
+          const next = Math.max(0, Math.min(this.filtered.length - 1, this.selected + delta));
+          if (next !== this.selected) {
+            this.selected = next;
+            this.previewKey = "";
+            changed = true;
+          }
+        }
+      } else {
+        const maxOff = Math.max(0, this.previewLines.length - H);
+        const next = Math.max(0, Math.min(maxOff, this.previewOffset + delta * WHEEL_LINES));
+        if (next !== this.previewOffset) {
+          this.previewOffset = next;
+          changed = true;
+        }
+      }
+      if (changed) this.invalidate();
+      return { handled: true, render: changed };
+    }
+    if (ev.button !== "left") return undefined;
+    if (ev.type === "click") {
+      // 单击在 press 里已经选中了，双击才进入
+      const s = this.filtered[itemAt()];
+      if (!s) return undefined;
+      if (!this.renaming && (ev.clickCount ?? 1) >= 2) this.onResume?.(s);
+      return { handled: true, render: false };
+    }
+    if (ev.type !== "press") return undefined;
+
+    let changed = this.confirmingDelete; // 删除确认和按键一样，点一下就算取消
+    this.confirmingDelete = false;
+    let handled = changed;
+    if (this.renaming) {
+      if (ev.y === BODY_TOP + H + 1) {
+        // 改名行：点哪里光标就去哪里
+        this.renameInput.handleMouse({ ...ev, x: ev.x - visibleWidth(msg("renamePrefix")), y: 0 });
+        handled = changed = true;
+      }
+    } else if (ev.y === 1) {
+      this.input.handleMouse({ ...ev, y: 0 });
+      handled = changed = true;
+    } else if (ev.y === 0) {
+      if (ev.x >= this.scopeSpan[0] && ev.x < this.scopeSpan[1]) {
+        this.scope = this.scope === "all" ? "current" : "all";
+        this.refilter();
+        handled = changed = true;
+      }
+    } else {
+      const idx = itemAt();
+      if (idx >= 0 && idx < this.filtered.length) {
+        handled = true; // 已选中的再按一次也算处理了，全屏模式下 pi-tui 才会把后面的双击发过来
+        if (idx !== this.selected) {
+          this.selected = idx;
+          this.previewKey = "";
+          changed = true;
+        }
+      }
+    }
+    if (!handled) return undefined; // 右栏和空白处不管，全屏模式下 pi-tui 还能在那里选文字
+    if (changed) this.invalidate();
+    return { handled: true, render: changed };
+  }
+
   // 预览里跳到当前视口之外的下一个 / 上一个命中行，到头了回绕。同一屏里的多个命中算一处，
   // 否则一段里连着几行都命中要按好几次才过得去
   private jumpMatch(dir: 1 | -1): void {
@@ -441,16 +536,24 @@ export class PeekComponent implements Component, Focusable {
   render(width: number): string[] {
     const H = this.bodyHeight();
     const cacheKey = width * 1000 + H; // 宽或高变了都要重画
-    if (this.cachedWidth === cacheKey) return this.cachedLines;
+    if (this.cachedWidth === cacheKey) {
+      // 缓存命中时组件在屏幕上的位置也可能变了（上面多了一行状态提示），照样通知一次，桥接那边自己去重
+      this.afterRender?.();
+      return this.cachedLines;
+    }
     const t = this.theme;
     const lw = Math.max(26, Math.min(56, Math.floor(width * 0.4)));
     const rw = Math.max(20, width - lw - 3);
+    this.layout = { lw, rw, H };
 
     const out: string[] = [];
 
     // 头部：标题、范围、时间过滤、匹配数，然后是搜索框
     const scopeLabel = this.scope === "all" ? msg("scopeAll") : msg("scopeCurrent");
     const { sinceLabel } = this.query();
+    // 「范围[Tab]: 当前目录树」整段都能点
+    const scopeStart = visibleWidth(msg("title"));
+    this.scopeSpan = [scopeStart, scopeStart + visibleWidth(msg("scopeLabel") + scopeLabel)];
     const head =
       t.fg("accent", t.bold(msg("title"))) +
       t.fg("dim", msg("scopeLabel")) +
@@ -514,6 +617,7 @@ export class PeekComponent implements Component, Focusable {
 
     this.cachedWidth = cacheKey;
     this.cachedLines = out;
+    this.afterRender?.();
     return out;
   }
 

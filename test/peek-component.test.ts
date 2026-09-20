@@ -553,3 +553,131 @@ test("工具摘要不参与搜索和高亮", () => {
   rightCol(c);
   assert.equal(c.matchLines.length, 1);
 });
+
+// 鼠标：坐标以组件左上角为原点，第 0 行标题、第 1 行搜索框、第 2 行分隔线，第 3 行起是双栏
+const MOUSE = (type: "press" | "click" | "wheel" | "release", x: number, y: number, extra: Record<string, unknown> = {}) => ({
+  type,
+  button: type === "wheel" ? "none" : "left",
+  x,
+  y,
+  screenX: x,
+  screenY: y,
+  width: 120,
+  height: 40,
+  shift: false,
+  alt: false,
+  ctrl: false,
+  ...extra,
+});
+
+test("鼠标：没画过之前不处理；左栏按下选中，同一项再按不重画，双击进入，单击不进入", () => {
+  const c = make(fixture(), "D:/nowhere");
+  assert.equal(c.handleMouse(MOUSE("press", 2, 5)), undefined);
+  c.render(120);
+  const lw = c.layout.lw;
+  assert.equal(lw, 48);
+  const got: string[] = [];
+  c.onResume = (s: PeekSession) => got.push(s.cwd);
+  // 第 3 项占主体第 4、5 行，即组件第 7、8 行
+  assert.deepEqual(c.handleMouse(MOUSE("press", 2, 8)), { handled: true, render: true });
+  assert.equal(c.selected, 2);
+  assert.deepEqual(c.handleMouse(MOUSE("press", lw - 1, 7)), { handled: true, render: false });
+  assert.equal(c.selected, 2);
+  c.handleMouse(MOUSE("click", 2, 8, { clickCount: 1 }));
+  assert.deepEqual(got, []);
+  c.handleMouse(MOUSE("click", 2, 8, { clickCount: 2 }));
+  assert.deepEqual(got, ["D:/projX"]);
+  // 列表下面的空白行和右栏都不管，全屏模式下 pi-tui 还能在那里选文字
+  assert.equal(c.handleMouse(MOUSE("press", 2, 3 + 8)), undefined);
+  assert.equal(c.handleMouse(MOUSE("press", lw + 5, 5)), undefined);
+  assert.equal(c.handleMouse(MOUSE("release", 2, 8)), undefined);
+  assert.equal(c.selected, 2);
+});
+
+test("鼠标：左栏滚轮换选中项并到边界夹住，右栏滚轮滚预览三行一格", () => {
+  const long = mk("D:/proj", Array.from({ length: 60 }, (_, i) => `message number ${i} ${"x".repeat(80)}`), 1);
+  const c = make([...fixture(), long], "D:/nowhere");
+  c.render(120);
+  const lw = c.layout.lw;
+  assert.deepEqual(c.handleMouse(MOUSE("wheel", 2, 5, { wheelDelta: 1 })), { handled: true, render: true });
+  assert.equal(c.selected, 1);
+  c.handleMouse(MOUSE("wheel", 2, 5, { wheelDelta: -5 }));
+  assert.equal(c.selected, 0);
+  assert.deepEqual(c.handleMouse(MOUSE("wheel", 2, 5, { wheelDelta: -1 })), { handled: true, render: false });
+  c.handleMouse(MOUSE("wheel", 2, 5, { wheelDelta: 99 }));
+  assert.equal(c.selected, 4);
+
+  c.render(120);
+  const bottom = c.previewOffset;
+  assert.ok(bottom > 6);
+  assert.deepEqual(c.handleMouse(MOUSE("wheel", lw + 10, 5, { wheelDelta: -1 })), { handled: true, render: true });
+  assert.equal(c.previewOffset, bottom - 3);
+  c.handleMouse(MOUSE("wheel", lw + 10, 5, { wheelDelta: 5 }));
+  c.render(120);
+  assert.equal(c.previewOffset, bottom, "clamped at the end");
+  c.handleMouse(MOUSE("wheel", lw + 10, 5, { wheelDelta: -999 }));
+  assert.equal(c.previewOffset, 0);
+  assert.equal(c.selected, 4, "preview wheel leaves the selection alone");
+});
+
+test("鼠标：点头部的范围字样切换范围，点别处不管；点搜索框移动光标", () => {
+  const c = make();
+  c.render(120);
+  assert.equal(c.scope, "current");
+  const [from, to] = c.scopeSpan;
+  assert.ok(from > 0 && to > from);
+  assert.deepEqual(c.handleMouse(MOUSE("press", from, 0)), { handled: true, render: true });
+  assert.equal(c.scope, "all");
+  c.handleMouse(MOUSE("press", to - 1, 0));
+  assert.equal(c.scope, "current");
+  assert.equal(c.handleMouse(MOUSE("press", 0, 0)), undefined);
+  assert.equal(c.handleMouse(MOUSE("press", to, 0)), undefined);
+  assert.equal(c.scope, "current");
+
+  type(c, "abc");
+  assert.equal(c.input.cursor, 3);
+  assert.deepEqual(c.handleMouse(MOUSE("press", 3, 1)), { handled: true, render: true });
+  assert.equal(c.input.cursor, 1);
+  assert.equal(c.selected, 0);
+});
+
+test("鼠标：删除确认中按一下就取消；改名中滚轮不换会话，点改名行移动光标", () => {
+  const c = make();
+  c.onDelete = async () => true;
+  c.onRename = async () => true;
+  c.render(120);
+  c.handleInput(KEY.cd);
+  assert.equal(c.confirmingDelete, true);
+  assert.deepEqual(c.handleMouse(MOUSE("press", c.layout.lw + 5, 5)), { handled: true, render: true });
+  assert.equal(c.confirmingDelete, false);
+
+  c.handleInput(KEY.cr);
+  c.renameInput.setValue("hello");
+  c.handleMouse(MOUSE("wheel", 2, 5, { wheelDelta: 1 }));
+  assert.equal(c.selected, 0);
+  c.handleMouse(MOUSE("click", 2, 3, { clickCount: 2 }));
+  assert.equal(c.renaming, true);
+  const lastRow = 3 + c.layout.H + 1;
+  const prefixW = visibleWidth("✏ 重命名: ");
+  assert.deepEqual(c.handleMouse(MOUSE("press", prefixW + 2 + 2, lastRow)), { handled: true, render: true });
+  assert.equal(c.renameInput.cursor, 2);
+});
+
+test("cursorRow：没焦点时不知道，搜索框在第 1 行，改名时在最后一行；render 每次都通知 afterRender", () => {
+  const c = make();
+  c.onRename = async () => true;
+  let notified = 0;
+  c.afterRender = () => notified++;
+  assert.equal(c.cursorRow(), undefined);
+  c.render(120);
+  assert.equal(notified, 1);
+  c.render(120); // 缓存命中也要通知：组件在屏幕上的位置可能变了
+  assert.equal(notified, 2);
+  assert.equal(c.cursorRow(), undefined);
+  c.focused = true;
+  assert.equal(c.cursorRow(), 1);
+  c.handleInput(KEY.cr);
+  assert.equal(c.cursorRow(), 3 + c.layout.H + 1);
+  c.handleInput(KEY.esc);
+  assert.equal(c.cursorRow(), 1);
+});
