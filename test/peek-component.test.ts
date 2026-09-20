@@ -21,7 +21,6 @@ function mk(cwd: string, texts: string[], ageDays: number, name = ""): PeekSessi
     name,
     first: texts[0],
     msgs: texts.map((text, i) => ({ role: i % 2 ? "assistant" : "user", text })),
-    searchText: (texts.join(" ") + " " + name + " " + cwd).toLowerCase(),
     mtime,
   };
 }
@@ -193,7 +192,10 @@ test("Ctrl+R 重命名：Enter 提交，名字参与搜索", async () => {
   await tick();
   assert.deepEqual(calls, ["fresh-name"]);
   assert.equal(c.filtered[0].name, "fresh-name");
-  assert.ok(c.filtered[0].searchText.includes("fresh-name"));
+  // 新名字立刻参与搜索，且不区分大小写
+  c.input.setValue("FRESH-name");
+  c.refilter();
+  assert.deepEqual(c.filtered.map((s: PeekSession) => s.name), ["fresh-name"]);
 });
 
 test("重命名后不再匹配关键词的会话从列表移除，仍匹配的保持选中", async () => {

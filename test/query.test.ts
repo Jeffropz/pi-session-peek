@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setLang } from "../src/i18n.ts";
-import { anyKw, highlight, parseQuery, snippet } from "../src/query.ts";
+import { anyKw, highlight, kwRegExps, matchesSession, parseQuery, snippet } from "../src/query.ts";
+import type { PeekSession } from "../src/sessions.ts";
 
 setLang("zh");
 
@@ -13,6 +14,29 @@ const theme = {
 };
 const ON = "\x1b[1m\x1b[4m\x1b[33m";
 const OFF = "\x1b[24m\x1b[22m\x1b[39m"; // 外面没有样式时：下划线、粗体、前景色全关
+
+function sess(texts: string[], name = "", cwd = "D:/proj"): PeekSession {
+  return {
+    path: "p", cwd, time: "", name, first: texts[0] ?? "", mtime: 0,
+    msgs: texts.map((text, i) => ({ role: i % 2 ? "assistant" : "user", text })),
+  };
+}
+
+test("matchesSession: 不区分大小写，每个词都要命中，名字和 cwd 也算", () => {
+  const s = sess(["Hello World", "second Reply"], "My Name");
+  assert.ok(matchesSession(s, kwRegExps(["hello", "reply"]))); // 分散在两条消息里也行
+  assert.ok(matchesSession(s, kwRegExps(["my name"])));
+  assert.ok(matchesSession(s, kwRegExps(["d:/proj"])));
+  assert.ok(!matchesSession(s, kwRegExps(["hello", "missing"])));
+  assert.ok(!matchesSession(sess([]), kwRegExps(["x"])));
+});
+
+test("kwRegExps: 关键词里的正则元字符按字面匹配", () => {
+  const s = sess(["call foo(bar) then a.b[0] and c++ $x"]);
+  for (const kw of ["foo(bar)", "a.b[0]", "c++", "$x", "(bar) then"]) assert.ok(matchesSession(s, kwRegExps([kw])), kw);
+  assert.ok(!matchesSession(s, kwRegExps(["a.b[1]"])));
+  assert.ok(!matchesSession(sess(["axb"]), kwRegExps(["a.b"]))); // . 不是通配
+});
 
 test("parseQuery: 小写、去重、@7d 变成时间下限", () => {
   const q = parseQuery("  Foo  @7d bar foo ");

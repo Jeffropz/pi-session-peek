@@ -1,5 +1,5 @@
 import { msg, type MsgKey } from "./i18n.ts";
-import type { PeekMsg } from "./sessions.ts";
+import type { PeekMsg, PeekSession } from "./sessions.ts";
 
 // 搜索框语法：空格分隔多个词，都要命中；@7d / @24h / @2w / @1m 限定最近活动时间
 
@@ -31,6 +31,16 @@ export function parseQuery(q: string): ParsedQuery {
     if (!kws.includes(tok)) kws.push(tok);
   }
   return { kws, since, sinceLabel };
+}
+
+// 关键词转成不区分大小写的正则，列表过滤用。正文不预存小写副本，直接在原文上匹配
+export function kwRegExps(kws: string[]): RegExp[] {
+  return kws.map((k) => new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+}
+
+// 每个关键词都要在会话名、cwd 或某条消息里出现
+export function matchesSession(s: PeekSession, res: RegExp[]): boolean {
+  return res.every((re) => re.test(s.name) || re.test(s.cwd) || s.msgs.some((m) => re.test(m.text)));
 }
 
 // 单条消息用：命中任意一个关键词就算

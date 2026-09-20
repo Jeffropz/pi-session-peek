@@ -33,7 +33,6 @@ const mk = (cwd, ago, texts, name = "") => ({
   name,
   first: texts[0].replace(/\s+/g, " ").slice(0, 80),
   msgs: texts.map((text, i) => ({ role: i % 2 ? "assistant" : "user", text })),
-  searchText: (texts.join(" ") + " " + name + " " + cwd).toLowerCase(),
   mtime: Date.now() - ago * day,
 });
 

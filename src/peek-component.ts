@@ -10,7 +10,7 @@ import {
   type MarkdownTheme,
 } from "@earendil-works/pi-tui";
 import { msg } from "./i18n.ts";
-import { anyKw, highlight, lineHasKw, parseQuery, snippet, type ParsedQuery } from "./query.ts";
+import { anyKw, highlight, kwRegExps, lineHasKw, matchesSession, parseQuery, snippet, type ParsedQuery } from "./query.ts";
 import type { PeekMsg, PeekSession } from "./sessions.ts";
 import { fmtTime, normPath, padEndVisible } from "./text.ts";
 
@@ -90,7 +90,10 @@ export class PeekComponent implements Component, Focusable {
     let out = this.all;
     if (this.scope === "current") out = out.filter((s) => this.inCurrentTree(s));
     if (since) out = out.filter((s) => s.mtime >= since);
-    if (kws.length) out = out.filter((s) => kws.every((k) => s.searchText.includes(k)));
+    if (kws.length) {
+      const res = kwRegExps(kws);
+      out = out.filter((s) => matchesSession(s, res));
+    }
     this.filtered = out;
     const idx = prev ? out.indexOf(prev) : -1;
     this.selected = idx >= 0 ? idx : keepSelection ? Math.min(this.selected, Math.max(0, out.length - 1)) : 0;
@@ -117,7 +120,6 @@ export class PeekComponent implements Component, Focusable {
             if (ok) {
               s.name = name;
               // 名字参与搜索，改完可能就不再匹配当前关键词了
-              s.searchText = (s.msgs.map((m) => m.text).join(" ") + " " + name + " " + s.cwd).toLowerCase();
               this.refilter(true);
             }
             this.invalidate();

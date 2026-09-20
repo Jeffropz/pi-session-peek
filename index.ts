@@ -54,7 +54,7 @@ export default function (pi: ExtensionAPI) {
 
       // 当前正在用的会话不列出来
       const currentFile = ctx.sessionManager.getSessionFile();
-      const all = scanSessions().filter((s) => s.path !== currentFile);
+      const all = (await scanSessions()).filter((s) => s.path !== currentFile);
       if (!all.length) {
         ctx.ui.notify(msg("noSessions"), "info");
         return;

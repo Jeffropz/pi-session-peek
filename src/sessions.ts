@@ -1,9 +1,11 @@
-import { appendFileSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-// 读 ~/.pi/agent/sessions 下的会话 JSONL，按 mtime 缓存；重命名和删除也在这里
+// 读 ~/.pi/agent/sessions 下的会话 JSONL，按 mtime 缓存；重命名和删除也在这里。
+// 搜索不预存小写全文：会话正文只在 msgs 里放一份，匹配时用不区分大小写的正则直接扫（见 query.ts 的 matchesSession）
 
 export interface PeekMsg {
   role: "user" | "assistant";
@@ -17,11 +19,11 @@ export interface PeekSession {
   name: string; // 最后一条 session_info 里的名字，没有则为空
   first: string; // 首条消息，列表里显示用
   msgs: PeekMsg[];
-  searchText: string; // 正文 + 会话名 + cwd，已小写
   mtime: number;
 }
 
 const sessionCache = new Map<string, PeekSession>();
+const READ_CONCURRENCY = 16; // 同时读的文件数，太高会把 libuv 线程池排满
 
 // 和 pi 一样认 PI_CODING_AGENT_DIR
 function sessionsDir(): string {
@@ -30,17 +32,17 @@ function sessionsDir(): string {
   return join(agent, "sessions");
 }
 
-function* walkJsonl(dir: string): Generator<string> {
+async function walkJsonl(dir: string, out: string[]): Promise<void> {
   let entries;
   try {
-    entries = readdirSync(dir, { withFileTypes: true });
+    entries = await readdir(dir, { withFileTypes: true });
   } catch {
     return;
   }
   for (const e of entries) {
     const p = join(dir, e.name);
-    if (e.isDirectory()) yield* walkJsonl(p);
-    else if (e.name.endsWith(".jsonl")) yield p;
+    if (e.isDirectory()) await walkJsonl(p, out);
+    else if (e.name.endsWith(".jsonl")) out.push(p);
   }
 }
 
@@ -53,13 +55,7 @@ function extractText(content: unknown): string {
     .join("\n");
 }
 
-function parseSession(path: string, mtime: number): PeekSession | null {
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
+function parseSession(path: string, raw: string, mtime: number): PeekSession | null {
   let cwd = "";
   let time = "";
   let name = "";
@@ -101,36 +97,48 @@ function parseSession(path: string, mtime: number): PeekSession | null {
     msgs,
     mtime,
     first: msgs[0].text.replace(/\s+/g, " ").slice(0, 80),
-    searchText: (msgs.map((m) => m.text).join(" ") + " " + name + " " + cwd).toLowerCase(),
   };
 }
 
-/** 全部会话，按最后修改时间倒序；文件没变的直接用缓存 */
-export function scanSessions(): PeekSession[] {
-  const seen = new Set<string>();
-  const out: PeekSession[] = [];
-
-  for (const file of walkJsonl(sessionsDir())) {
-    seen.add(file);
-    let mtime = 0;
-    try {
-      mtime = statSync(file).mtimeMs;
-    } catch {
-      continue;
-    }
-    const hit = sessionCache.get(file);
-    if (hit && hit.mtime === mtime) {
-      out.push(hit);
-      continue;
-    }
-    const parsed = parseSession(file, mtime);
-    if (parsed) {
-      sessionCache.set(file, parsed);
-      out.push(parsed);
-    }
+// 单个文件：mtime 没变直接用缓存，否则重新读和解析
+async function loadSession(file: string): Promise<PeekSession | null> {
+  let mtime: number;
+  try {
+    mtime = (await stat(file)).mtimeMs;
+  } catch {
+    return null;
   }
+  const hit = sessionCache.get(file);
+  if (hit && hit.mtime === mtime) return hit;
+  let raw: string;
+  try {
+    raw = await readFile(file, "utf8");
+  } catch {
+    return null;
+  }
+  const parsed = parseSession(file, raw, mtime);
+  if (parsed) sessionCache.set(file, parsed);
+  return parsed;
+}
+
+/** 全部会话，按最后修改时间倒序；文件没变的直接用缓存。
+ * 目录遍历和文件读取都走异步 I/O，几百个会话也不会把 TUI 卡住 */
+export async function scanSessions(): Promise<PeekSession[]> {
+  const files: string[] = [];
+  await walkJsonl(sessionsDir(), files);
+
+  const out: PeekSession[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < files.length) {
+      const s = await loadSession(files[next++]);
+      if (s) out.push(s);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, files.length) }, worker));
 
   // 文件已经不在了的，从缓存里去掉
+  const seen = new Set(files);
   for (const key of [...sessionCache.keys()]) {
     if (!seen.has(key)) sessionCache.delete(key);
   }

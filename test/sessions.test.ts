@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { deleteSession, renameSession, scanSessions, trashCommands } from "../src/sessions.ts";
+import { kwRegExps, matchesSession } from "../src/query.ts";
+import { deleteSession, renameSession, scanSessions, trashCommands, type PeekSession } from "../src/sessions.ts";
 
 let agentDir: string;
 let dir: string;
@@ -34,6 +35,11 @@ function session(file: string, opts: { cwd: string; time: string; name?: string;
   return p;
 }
 
+// 以前的 searchText 现在由 matchesSession 现算
+function hits(s: PeekSession, kw: string): boolean {
+  return matchesSession(s, kwRegExps([kw.toLowerCase()]));
+}
+
 before(() => {
   agentDir = mkdtempSync(join(tmpdir(), "peek-agent-"));
   dir = join(agentDir, "sessions", "--D--proj--");
@@ -46,7 +52,7 @@ after(() => {
   rmSync(agentDir, { recursive: true, force: true });
 });
 
-test("scanSessions: 解析 header、消息、名字，工具输入输出不进索引", () => {
+test("scanSessions: 解析 header、消息、名字，工具输入输出不进索引", async () => {
   const a = session("a", {
     cwd: "D:\\proj",
     time: "2026-09-01T00:00:00.000Z",
@@ -60,7 +66,7 @@ test("scanSessions: 解析 header、消息、名字，工具输入输出不进�
   session("empty", { cwd: "D:\\proj", time: "2026-09-03T00:00:00.000Z", msgs: [] });
   writeFileSync(join(dir, "broken.jsonl"), "not json\n{\n");
 
-  const all = scanSessions();
+  const all = await scanSessions();
   assert.deepEqual(all.map((s) => s.path), [b, a]);
 
   const sa = all[1];
@@ -72,40 +78,41 @@ test("scanSessions: 解析 header、消息、名字，工具输入输出不进�
     { role: "assistant", text: "an answer" },
   ]);
   assert.equal(sa.first, "first question second line");
-  assert.ok(sa.searchText.includes("first   question"));
-  assert.ok(sa.searchText.includes("my name"));
-  assert.ok(sa.searchText.includes("d:\\proj"));
-  assert.ok(!sa.searchText.includes("secret_tool_arg"));
-  assert.ok(!sa.searchText.includes("secret_tool_output"));
+  assert.ok(!("searchText" in sa)); // 不再额外存一份小写全文
+  assert.ok(hits(sa, "FIRST   question"));
+  assert.ok(hits(sa, "my name"));
+  assert.ok(hits(sa, "d:\\proj"));
+  assert.ok(!hits(sa, "secret_tool_arg"));
+  assert.ok(!hits(sa, "secret_tool_output"));
 });
 
-test("scanSessions: 最后一条 session_info 生效，空名字清掉", () => {
+test("scanSessions: 最后一条 session_info 生效，空名字清掉", async () => {
   const p = session("c", { cwd: "D:\\proj", time: "2026-09-04T00:00:00.000Z", name: "old", msgs: [["user", "x"]] });
   writeFileSync(p, readFileSync(p, "utf8") + line({ type: "session_info", id: "info2", parentId: "info", timestamp: "2026-09-04T00:00:01.000Z", name: "" }) + line({ type: "session_info", id: "info3", parentId: "info2", timestamp: "2026-09-04T00:00:02.000Z", name: "newest" }));
-  const s = scanSessions().find((s) => s.path === p)!;
+  const s = (await scanSessions()).find((s) => s.path === p)!;
   assert.equal(s.name, "newest");
 });
 
-test("scanSessions: mtime 不变复用缓存，变了重新解析，文件删了就消失", () => {
+test("scanSessions: mtime 不变复用缓存，变了重新解析，文件删了就消失", async () => {
   const p = session("d", { cwd: "D:\\proj", time: "2026-09-05T00:00:00.000Z", msgs: [["user", "v1"]] });
   const t1 = new Date("2026-09-05T00:00:00Z");
   utimesSync(p, t1, t1);
-  const first = scanSessions().find((s) => s.path === p)!;
-  const again = scanSessions().find((s) => s.path === p)!;
+  const first = (await scanSessions()).find((s) => s.path === p)!;
+  const again = (await scanSessions()).find((s) => s.path === p)!;
   assert.equal(again, first);
 
   writeFileSync(p, readFileSync(p, "utf8") + line({ type: "message", id: "m9", parentId: "d-0", timestamp: "x", message: { role: "assistant", content: [{ type: "text", text: "v2" }] } }));
   const t2 = new Date("2026-09-05T01:00:00Z");
   utimesSync(p, t2, t2);
-  const updated = scanSessions().find((s) => s.path === p)!;
+  const updated = (await scanSessions()).find((s) => s.path === p)!;
   assert.notEqual(updated, first);
   assert.equal(updated.msgs.length, 2);
 
   rmSync(p);
-  assert.equal(scanSessions().some((s) => s.path === p), false);
+  assert.equal((await scanSessions()).some((s) => s.path === p), false);
 });
 
-test("renameSession: 追加 session_info，parentId 是最后一条记录，能跳过写了一半的末行", () => {
+test("renameSession: 追加 session_info，parentId 是最后一条记录，能跳过写了一半的末行", async () => {
   const p = session("e", { cwd: "D:\\proj", time: "2026-09-06T00:00:00.000Z", msgs: [["user", "hi"], ["assistant", "yo"]] });
   writeFileSync(p, readFileSync(p, "utf8") + '{"type":"message","id":"half"');
   renameSession(p, "renamed");
@@ -115,7 +122,7 @@ test("renameSession: 追加 session_info，parentId 是最后一条记录，能�
   assert.equal(last.name, "renamed");
   assert.equal(last.parentId, "e-1");
   assert.equal(typeof last.id, "string");
-  assert.equal(scanSessions().find((s) => s.path === p)!.name, "renamed");
+  assert.equal((await scanSessions()).find((s) => s.path === p)!.name, "renamed");
 });
 
 test("deleteSession: 回收站命令成功且文件消失才算进回收站，否则依次再试，最后直接删", async () => {

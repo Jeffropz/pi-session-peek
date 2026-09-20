@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `scanSessions` is now async: directory walking and file reads go through `fs/promises` with bounded concurrency, so opening `/peek` with hundreds of sessions no longer blocks the TUI.
+- Sessions no longer keep a second, lowercased copy of their full text for searching. Keyword filtering runs case-insensitive regexes over the messages directly, which roughly halves memory per cached session and is faster than the old `toLowerCase().includes()` scan.
+
 ## 0.3.0
 
 - Ctrl+D now prefers the system trash on every platform instead of only the `trash` CLI: Windows Recycle Bin via PowerShell, Finder on macOS, `gio trash` / `trash-put` on Linux. The file is deleted permanently only when none of them works, and the notification says which one happened.
