@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1
 
 - `scanSessions` is now async: directory walking and file reads go through `fs/promises` with bounded concurrency, so opening `/peek` with hundreds of sessions no longer blocks the TUI.
 - Sessions no longer keep a second, lowercased copy of their full text for searching. Keyword filtering runs case-insensitive regexes over the messages directly, which roughly halves memory per cached session and is faster than the old `toLowerCase().includes()` scan.
