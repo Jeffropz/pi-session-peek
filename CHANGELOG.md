@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 - Mouse support in both panes. Click a session to select it, double-click to resume, wheel over the list to move the selection, wheel over the preview to scroll it (`Alt` for five times faster), click the scope label to toggle it, click the search box or rename line to move the cursor. Pi only enables mouse reporting in fullscreen mode, so in the regular mode the picker turns it on itself while open and locates itself on screen with a cursor position query; the terminal's own text selection is unavailable meanwhile (usually `Shift` restores it). `PI_SESSION_PEEK_MOUSE=0` disables it.
 - Drag to select text inside one pane. The selection never crosses the divider: dragging from the list into the preview, or past either edge, keeps selecting the pane where the drag started, and lines wrap at that pane's width. Dragging below or above the preview scrolls it. Nothing is copied on release; `Ctrl+C` copies the selection (and closes the picker as before when there is none), a click anywhere clears it.
