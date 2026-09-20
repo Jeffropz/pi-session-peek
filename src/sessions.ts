@@ -1,4 +1,4 @@
-import { appendFileSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -167,19 +167,43 @@ export function renameSession(path: string, name: string): void {
   appendFileSync(path, sep + JSON.stringify(entry) + "\n", "utf8");
 }
 
-// 先试 trash（能恢复），不行再直接删。trashExec 由调用方传入，方便测试
+export type DeleteResult = "trash" | "rm" | false;
+
+// 各平台把文件送进回收站的命令，按顺序试。trash（trash-cli / brew trash）放最前面，装了就说明用户想用它；
+// 后面是系统自带的途径：Windows 走 PowerShell 的 VisualBasic FileSystem，macOS 走 Finder，Linux 走 gio / trash-put
+export function trashCommands(path: string, platform: NodeJS.Platform = process.platform): [string, string[]][] {
+  const cmds: [string, string[]][] = [["trash", [path]]];
+  if (platform === "win32") {
+    const script =
+      "Add-Type -AssemblyName Microsoft.VisualBasic; " +
+      `[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${path.replace(/'/g, "''")}', 'OnlyErrorDialogs', 'SendToRecycleBin')`;
+    const args = ["-NoProfile", "-NonInteractive", "-Command", script];
+    cmds.push(["powershell", args], ["pwsh", args]);
+  } else if (platform === "darwin") {
+    cmds.push(["osascript", ["-e", `tell application "Finder" to delete POSIX file "${path.replace(/[\\"]/g, "\\$&")}"`]]);
+  } else {
+    cmds.push(["gio", ["trash", path]], ["trash-put", [path]]);
+  }
+  return cmds;
+}
+
+// 优先进回收站（能恢复），每个途径都不行再直接删。exec 由调用方传入，方便测试；
+// 命令退出码为 0 但文件还在也当失败，继续试下一个
 export async function deleteSession(
   path: string,
-  trashExec: (cmd: string, args: string[]) => Promise<{ code: number }>,
-): Promise<boolean> {
-  try {
-    const r = await trashExec("trash", [path]);
-    if (r.code === 0) return true;
-  } catch {
+  exec: (cmd: string, args: string[]) => Promise<{ code: number }>,
+  platform: NodeJS.Platform = process.platform,
+): Promise<DeleteResult> {
+  for (const [cmd, args] of trashCommands(path, platform)) {
+    try {
+      const r = await exec(cmd, args);
+      if (r.code === 0 && !existsSync(path)) return "trash";
+    } catch {
+    }
   }
   try {
     rmSync(path, { force: true });
-    return true;
+    return "rm";
   } catch {
     return false;
   }

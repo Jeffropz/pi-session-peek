@@ -46,10 +46,10 @@ test("msg: 插值和语言切换", () => {
   try {
     setLang("zh");
     assert.equal(msg("matchCount", { n: 3, total: 10 }), "  匹配 3/10");
-    assert.equal(msg("deleted", { file: "a.jsonl" }), "已删除会话 a.jsonl");
+    assert.equal(msg("trashed", { file: "a.jsonl" }), "已将会话 a.jsonl 移入回收站");
     setLang("en");
     assert.equal(msg("matchCount", { n: 3, total: 10 }), "  3/10 matched");
-    assert.equal(msg("deleted", { file: "a.jsonl" }), "Deleted session a.jsonl");
+    assert.equal(msg("trashed", { file: "a.jsonl" }), "Moved session a.jsonl to the trash");
     assert.equal(msg("noMatch"), "No matching sessions");
   } finally {
     setLang(prev);

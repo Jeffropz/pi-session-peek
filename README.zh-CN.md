@@ -68,7 +68,7 @@ pi 扩展以你的用户权限运行，只装信得过的包。
 | `Enter` | 进入会话 |
 | `Ctrl+O` | 分叉出新会话并进入 |
 | `Ctrl+R` | 重命名，写入的记录和 `/name` 一样 |
-| `Ctrl+D` | 删除，按 `y` 或 `Enter` 确认。有 `trash` 命令就进回收站，否则直接删文件。 |
+| `Ctrl+D` | 删除，按 `y` 或 `Enter` 确认。只要系统有回收站就优先进回收站（`trash` 命令、Windows 用 PowerShell 进回收站、macOS 用 Finder、Linux 用 `gio trash` / `trash-put`），全都不可用才直接删文件。 |
 | `Esc` `Ctrl+C` | 关闭 |
 
 ## 🔎 搜索语法

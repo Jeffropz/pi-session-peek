@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Ctrl+D now prefers the system trash on every platform instead of only the `trash` CLI: Windows Recycle Bin via PowerShell, Finder on macOS, `gio trash` / `trash-put` on Linux. The file is deleted permanently only when none of them works, and the notification says which one happened.
+
 ## 0.2.1
 
 - Ctrl+N / Ctrl+P now jump between hit lines instead of hit messages. Several hits inside one long reply used to collapse into a single stop, so the preview appeared not to move. Hits already on screen are skipped, and the top-right corner shows the current hit as `hit k/n`.

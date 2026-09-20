@@ -78,9 +78,13 @@ export default function (pi: ExtensionAPI) {
           done(null);
         };
         comp.onDelete = async (s) => {
-          const ok = await deleteSession(s.path, (cmd, a) => pi.exec(cmd, a, { timeout: 4000 }));
-          ctx.ui.notify(ok ? msg("deleted", { file: basename(s.path) }) : msg("deleteFailed"), ok ? "info" : "error");
-          return ok;
+          // PowerShell / osascript 冷启动要一两秒，超时给宽一点
+          const r = await deleteSession(s.path, (cmd, a) => pi.exec(cmd, a, { timeout: 15000 }));
+          const file = basename(s.path);
+          if (r === "trash") ctx.ui.notify(msg("trashed", { file }), "info");
+          else if (r === "rm") ctx.ui.notify(msg("deleted", { file }), "info");
+          else ctx.ui.notify(msg("deleteFailed"), "error");
+          return r !== false;
         };
         comp.onRename = async (s, name) => {
           let ok = true;

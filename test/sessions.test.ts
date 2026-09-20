@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { deleteSession, renameSession, scanSessions } from "../src/sessions.ts";
+import { deleteSession, renameSession, scanSessions, trashCommands } from "../src/sessions.ts";
 
 let agentDir: string;
 let dir: string;
@@ -118,17 +118,47 @@ test("renameSession: 追加 session_info，parentId 是最后一条记录，能�
   assert.equal(scanSessions().find((s) => s.path === p)!.name, "renamed");
 });
 
-test("deleteSession: trash 成功就不再删文件，失败或抛错则直接删", async () => {
-  const p = session("f", { cwd: "D:\\proj", time: "2026-09-07T00:00:00.000Z", msgs: [["user", "bye"]] });
+test("deleteSession: 回收站命令成功且文件消失才算进回收站，否则依次再试，最后直接删", async () => {
+  const p = session("f", { cwd: "D:\proj", time: "2026-09-07T00:00:00.000Z", msgs: [["user", "bye"]] });
   const calls: string[][] = [];
-  assert.equal(await deleteSession(p, async (cmd, args) => (calls.push([cmd, ...args]), { code: 0 })), true);
+  // 模拟 trash 真的把文件移走了
+  const r1 = await deleteSession(p, async (cmd, args) => (calls.push([cmd, ...args]), rmSync(p), { code: 0 }), "linux");
+  assert.equal(r1, "trash");
   assert.deepEqual(calls, [["trash", p]]);
-  assert.equal(existsSync(p), true);
 
-  assert.equal(await deleteSession(p, async () => ({ code: 1 })), true);
-  assert.equal(existsSync(p), false);
-
-  const q = session("g", { cwd: "D:\\proj", time: "2026-09-07T00:00:00.000Z", msgs: [["user", "bye"]] });
-  assert.equal(await deleteSession(q, async () => { throw new Error("no trash"); }), true);
+  // 退出码 0 但文件还在（比如同名的别的程序）：不算成功，继续试后面的
+  const q = session("g", { cwd: "D:\proj", time: "2026-09-07T00:00:00.000Z", msgs: [["user", "bye"]] });
+  calls.length = 0;
+  const r2 = await deleteSession(q, async (cmd) => (calls.push([cmd]), { code: 0 }), "linux");
+  assert.equal(r2, "rm");
+  assert.deepEqual(calls.map((c) => c[0]), ["trash", "gio", "trash-put"]);
   assert.equal(existsSync(q), false);
+
+  // 全部抛错（命令不存在）也直接删
+  const h = session("h", { cwd: "D:\proj", time: "2026-09-07T00:00:00.000Z", msgs: [["user", "bye"]] });
+  assert.equal(await deleteSession(h, async () => { throw new Error("no trash"); }, "darwin"), "rm");
+  assert.equal(existsSync(h), false);
+
+  // 文件本来就不存在：回收站命令不可能成功，rmSync force 也不报错
+  assert.equal(await deleteSession(join(dir, "nope.jsonl"), async () => ({ code: 1 }), "win32"), "rm");
+});
+
+test("trashCommands: 各平台的候选命令，路径里的引号要转义", () => {
+  assert.deepEqual(trashCommands("/a/b.jsonl", "linux"), [
+    ["trash", ["/a/b.jsonl"]],
+    ["gio", ["trash", "/a/b.jsonl"]],
+    ["trash-put", ["/a/b.jsonl"]],
+  ]);
+
+  const mac = trashCommands('/a/it"s.jsonl', "darwin");
+  assert.equal(mac[0][0], "trash");
+  assert.equal(mac[1][0], "osascript");
+  assert.equal(mac[1][1][1], 'tell application "Finder" to delete POSIX file "/a/it\\"s.jsonl"');
+
+  const win = trashCommands("C:\\x\\it's.jsonl", "win32");
+  assert.deepEqual(win.map((c) => c[0]), ["trash", "powershell", "pwsh"]);
+  const script = win[1][1].at(-1)!;
+  assert.ok(win[1][1].includes("-NonInteractive"));
+  assert.ok(script.includes("DeleteFile('C:\\x\\it''s.jsonl', 'OnlyErrorDialogs', 'SendToRecycleBin')"), script);
+  assert.deepEqual(win[2][1], win[1][1]);
 });

@@ -68,7 +68,7 @@ In TUI mode, run `/peek` and start typing. Press `Enter` on a session to continu
 | `Enter` | Resume the session |
 | `Ctrl+O` | Fork the session and open the fork |
 | `Ctrl+R` | Rename. Writes the same `session_info` entry as `/name`. |
-| `Ctrl+D` | Delete, confirmed with `y` or `Enter`. Uses the `trash` CLI when available, otherwise deletes the file. |
+| `Ctrl+D` | Delete, confirmed with `y` or `Enter`. Moves the file to the system trash whenever one is available (`trash` CLI, then the Windows Recycle Bin via PowerShell, Finder on macOS, `gio trash` / `trash-put` on Linux). Deletes permanently only if none of those work. |
 | `Esc` `Ctrl+C` | Close |
 
 ## 🔎 Search syntax
