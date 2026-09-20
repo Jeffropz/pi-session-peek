@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `Ctrl+T` shows tool calls in the preview: one dim line per call with the tool name and its main argument (command, path, URL, query…), placed under the reply that made it. Off by default. Tool results are still not stored, and the tool lines are never searched or highlighted.
+- Assistant turns that only call tools (no text) are now kept when parsing, so with `Ctrl+T` on the preview no longer jumps from "let me check" straight to the conclusion. With it off they are skipped as before.
+
 ## 0.4.0
 
 - Search syntax: `"exact phrase"` (whitespace inside the quotes matches any whitespace, including line breaks), `a|b` for either, `-word` to exclude, `name:` / `dir:` (`cwd:`) / `user:` / `ai:` (`assistant:`) to limit a term to one field, and `/regex/` for JavaScript regular expressions. Prefixes stack (`-user:"not now"`), quotes escape everything else, and an invalid regex falls back to plain text.

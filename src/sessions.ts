@@ -7,9 +7,15 @@ import { join } from "node:path";
 // 读 ~/.pi/agent/sessions 下的会话 JSONL，按 mtime 缓存；重命名和删除也在这里。
 // 搜索不预存小写全文：会话正文只在 msgs 里放一份，匹配时用不区分大小写的正则直接扫（见 query.ts 的 matchesSession）
 
+export interface PeekTool {
+  name: string;
+  summary: string; // 主参数（命令 / 路径 / URL…）压成一行，预览里显示用
+}
+
 export interface PeekMsg {
   role: "user" | "assistant";
-  text: string;
+  text: string; // 只发了工具调用、没写字的 AI 轮次为空串
+  tools?: PeekTool[]; // 这条消息里的工具调用，没有就不带这个键。不进搜索索引
 }
 
 export interface PeekSession {
@@ -55,6 +61,26 @@ function extractText(content: unknown): string {
     .join("\n");
 }
 
+// 工具调用的主参数：按常见键名找第一个字符串，都没有就取第一个字符串参数。不存结果，bash 输出动辄几十 KB
+const TOOL_ARG_KEYS = ["command", "path", "url", "query", "pattern", "file_path"];
+const TOOL_SUMMARY_MAX = 120;
+
+export function toolSummary(args: unknown): string {
+  if (!args || typeof args !== "object") return "";
+  const o = args as Record<string, unknown>;
+  let v = TOOL_ARG_KEYS.map((k) => o[k]).find((x) => typeof x === "string" && x.trim());
+  if (typeof v !== "string") v = Object.values(o).find((x) => typeof x === "string" && (x as string).trim());
+  if (typeof v !== "string") return "";
+  return v.replace(/\s+/g, " ").trim().slice(0, TOOL_SUMMARY_MAX);
+}
+
+function extractTools(content: unknown): PeekTool[] {
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((c: any) => c?.type === "toolCall" && typeof c.name === "string")
+    .map((c: any) => ({ name: c.name, summary: toolSummary(c.arguments) }));
+}
+
 function parseSession(path: string, raw: string, mtime: number): PeekSession | null {
   let cwd = "";
   let time = "";
@@ -82,12 +108,17 @@ function parseSession(path: string, raw: string, mtime: number): PeekSession | n
       const role = o.message?.role;
       if (role !== "user" && role !== "assistant") continue;
       const text = extractText(o.message?.content).trim();
-      if (text) msgs.push({ role, text });
+      const tools = role === "assistant" ? extractTools(o.message.content) : [];
+      // 只有工具调用的 AI 轮次也留着，否则预览里"我来看看"直接跳到结论，中间做了什么全没了
+      if (tools.length) msgs.push({ role, text, tools });
+      else if (text) msgs.push({ role, text });
     } catch {
     }
   }
 
-  if (!msgs.length) return null;
+  // 一条文字消息都没有的会话不列出来；列表里的首条也只看有文字的
+  const firstText = msgs.find((m) => m.text);
+  if (!firstText) return null;
 
   return {
     path,
@@ -96,7 +127,7 @@ function parseSession(path: string, raw: string, mtime: number): PeekSession | n
     name,
     msgs,
     mtime,
-    first: msgs[0].text.replace(/\s+/g, " ").slice(0, 80),
+    first: firstText.text.replace(/\s+/g, " ").slice(0, 80),
   };
 }
 

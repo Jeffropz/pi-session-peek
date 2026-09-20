@@ -12,11 +12,12 @@ Search your [pi](https://pi.dev) session history by what was actually said, read
 
 - Opens a two-pane picker with `/peek` or `/peek <keyword>`: sessions on the left, the full conversation on the right.
 - Renders the conversation with pi's own Markdown renderer, so headings, code blocks with syntax highlighting, tables and lists look the same as in the main transcript.
-- Filters as you type across conversation text, session name and working directory. Tool call arguments and results are excluded, so a keyword only matches sessions that actually discussed it.
+- Filters as you type across conversation text, session name and working directory. Tool call arguments and results are excluded from the search, so a keyword only matches sessions that actually discussed it.
 - Requires every space-separated keyword to match, and shows a snippet around the first hit in the list.
 - Understands `"exact phrases"`, `either|or`, `-exclude`, `name:` / `dir:` / `user:` / `ai:` prefixes and `/regex/`.
 - Limits results to recently active sessions with `@7d`, `@24h`, `@2w` or `@1m`.
 - Highlights every hit in the preview and jumps between them with `Ctrl+N` / `Ctrl+P`.
+- Shows what the assistant actually did with `Ctrl+T`: one dim line per tool call (`⚙ bash  git status`, `⚙ edit  src/query.ts`) under the reply that made it. Off by default.
 - Resumes with `Enter`, forks into a new session with `Ctrl+O`, renames with `Ctrl+R`, deletes with `Ctrl+D`.
 - Toggles between the current directory tree and all projects with `Tab`.
 - Starts straight into the picker with `pi --rp` or `pi --peek=<keyword>`.
@@ -66,6 +67,7 @@ In TUI mode, run `/peek` and start typing. Press `Enter` on a session to continu
 | `Ctrl+U` `Ctrl+F` | Scroll preview by half a page |
 | `Shift+↑` `Shift+↓` | Scroll preview by three lines |
 | `Ctrl+N` `Ctrl+P` | Next / previous hit line outside the current view; the top-right corner shows `hit k/n` |
+| `Ctrl+T` | Show / hide tool calls in the preview. Each call is one line with the tool name and its main argument (command, path, URL, query). Results are never shown. |
 | `Enter` | Resume the session |
 | `Ctrl+O` | Fork the session and open the fork |
 | `Ctrl+R` | Rename. Writes the same `session_info` entry as `/name`. |
@@ -90,7 +92,7 @@ The filter is case-insensitive and matches anywhere in the text. Whitespace sepa
 
 Quotes are the escape hatch: `"-foo"`, `"a|b"`, `"name:x"` and `"/x/"` search for those characters literally. A regex that fails to compile is searched as plain text. Only positive terms are highlighted in the preview, and `name:` / `dir:` terms never touch the conversation, so `name:auth` alone shows the full conversation with no highlights.
 
-The search index holds user and assistant messages, the session name and the working directory. It does not hold tool call arguments or tool results.
+The search index holds user and assistant messages, the session name and the working directory. It does not hold tool call arguments or tool results, and the tool lines shown by `Ctrl+T` are never matched or highlighted.
 
 ## 🌐 Language
 

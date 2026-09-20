@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { matchesSession, parseQuery } from "../src/query.ts";
-import { deleteSession, renameSession, scanSessions, trashCommands, type PeekSession } from "../src/sessions.ts";
+import { deleteSession, renameSession, scanSessions, toolSummary, trashCommands, type PeekSession } from "../src/sessions.ts";
 
 let agentDir: string;
 let dir: string;
@@ -76,6 +76,8 @@ test("scanSessions: 解析 header、消息、名字，工具输入输出不进�
   assert.deepEqual(sa.msgs, [
     { role: "user", text: "first   question\nsecond line" },
     { role: "assistant", text: "an answer" },
+    // 只有工具调用的 AI 轮次也保留，预览开 Ctrl+T 时显示；工具结果不存
+    { role: "assistant", text: "", tools: [{ name: "bash", summary: "grep SECRET_TOOL_ARG" }] },
   ]);
   assert.equal(sa.first, "first question second line");
   assert.ok(!("searchText" in sa)); // 不再额外存一份小写全文
@@ -168,4 +170,16 @@ test("trashCommands: 各平台的候选命令，路径里的引号要转义", ()
   assert.ok(win[1][1].includes("-NonInteractive"));
   assert.ok(script.includes("DeleteFile('C:\\x\\it''s.jsonl', 'OnlyErrorDialogs', 'SendToRecycleBin')"), script);
   assert.deepEqual(win[2][1], win[1][1]);
+});
+
+test("toolSummary: 常见主参数优先，其次第一个字符串参数，压成一行并截断", () => {
+  assert.equal(toolSummary({ command: "  git   status\n" }), "git status");
+  assert.equal(toolSummary({ limit: 10, path: "src/a.ts" }), "src/a.ts");
+  assert.equal(toolSummary({ edits: [], path: "src/b.ts" }), "src/b.ts");
+  assert.equal(toolSummary({ max_results: 5, query: "pi tui" }), "pi tui");
+  assert.equal(toolSummary({ foo: 1, bar: "first string" }), "first string");
+  assert.equal(toolSummary({ n: 1 }), "");
+  assert.equal(toolSummary(undefined), "");
+  assert.equal(toolSummary("x"), "");
+  assert.equal(toolSummary({ command: "x".repeat(200) }).length, 120);
 });

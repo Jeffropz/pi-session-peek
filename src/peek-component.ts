@@ -23,7 +23,8 @@ export class PeekComponent implements Component, Focusable {
   private selected = 0;
   private listOffset = 0;
   private previewOffset = 0;
-  private previewKey = ""; // 预览缓存的键（会话 + 关键词 + 宽度），置空强制重建
+  private previewKey = ""; // 预览缓存的键（会话 + 关键词 + 宽度 + 工具开关），置空强制重建
+  private showTools = false; // Ctrl+T：预览里显示每次工具调用的一行摘要
   private previewLines: string[] = [];
   private matchLines: number[] = []; // 预览里含关键词的行（升序），Ctrl+N / Ctrl+P 用
   private rendered = new WeakMap<PeekMsg, { w: number; lines: string[] }>(); // 每条消息渲染好的行，按宽度缓存
@@ -224,6 +225,12 @@ export class PeekComponent implements Component, Focusable {
       this.invalidate();
       return;
     }
+    if (matchesKey(data, Key.ctrl("t"))) {
+      this.showTools = !this.showTools;
+      this.previewKey = "";
+      this.invalidate();
+      return;
+    }
     if (matchesKey(data, Key.ctrl("n"))) {
       this.jumpMatch(1);
       return;
@@ -339,7 +346,7 @@ export class PeekComponent implements Component, Focusable {
   private buildPreview(rw: number): void {
     const t = this.theme;
     const s = this.filtered[this.selected];
-    const key = s ? `${s.path}|${this.getQuery()}|${rw}` : "none";
+    const key = s ? `${s.path}|${this.getQuery()}|${rw}|${this.showTools ? "t" : ""}` : "none";
     if (key === this.previewKey) return;
     this.previewKey = key;
     this.matchLines = [];
@@ -351,9 +358,11 @@ export class PeekComponent implements Component, Focusable {
     }
 
     const lines: string[] = [];
+    // 消息数只算有文字的，纯工具轮次不计
+    const textCount = s.msgs.reduce((n, m) => n + (m.text ? 1 : 0), 0);
     lines.push(
       truncateToWidth(
-        t.fg("dim", `${s.cwd} • ${msg("msgCount", { n: s.msgs.length })}${s.name ? " • " + s.name : ""}`),
+        t.fg("dim", `${s.cwd} • ${msg("msgCount", { n: textCount })}${s.name ? " • " + s.name : ""}`),
         rw,
       ),
     );
@@ -385,26 +394,39 @@ export class PeekComponent implements Component, Focusable {
       return truncateToWidth(label + " " + "─".repeat(Math.max(2, rw - w - 1)), rw);
     };
 
+    let prevRole: PeekMsg["role"] | undefined; // 上一条画出来的消息的角色
     for (const m of msgs) {
+      const tools = this.showTools ? (m.tools ?? []) : [];
+      if (!m.text && !tools.length) continue; // 工具隐藏时，只有工具调用的 AI 轮次整条跳过
       const terms = rt[m.role]; // user: 的词只在用户消息里高亮，ai: 的只在 AI 回复里
       const isMatch = terms.length > 0 && anyMatch(m.text, terms);
-      const head = lines.length;
-      if (m.role === "user") {
+      // 紧跟在 AI 文字后面、只有工具调用的轮次不重复画标签，接在上一条正文下面，看起来是同一轮
+      const continues = m.role === "assistant" && prevRole === "assistant" && !m.text;
+      if (continues) {
+        lines.pop();
+      } else if (m.role === "user") {
         lines.push(
           t.bg("userMessageBg", padEndVisible(t.bold(t.fg("accent", fillLabel(msg("you")))), rw)),
         );
       } else {
         lines.push(t.fg("muted", fillLabel(msg("ai"))));
       }
+      const head = lines.length - 1;
       // 先渲染再高亮：往 markdown 源码里插转义码会把链接、代码块的语法弄坏
       const before = this.matchLines.length;
-      for (const l of this.renderMsg(m, rw)) {
-        if (isMatch && lineHasMatch(l, terms)) this.matchLines.push(lines.length);
-        lines.push(isMatch ? highlight(l, terms, t) : l);
+      if (m.text) {
+        for (const l of this.renderMsg(m, rw)) {
+          if (isMatch && lineHasMatch(l, terms)) this.matchLines.push(lines.length);
+          lines.push(isMatch ? highlight(l, terms, t) : l);
+        }
       }
       // 关键词被折行拆开时哪一行都找不到，退回到消息标题行，别把这条消息漏掉
       if (isMatch && this.matchLines.length === before) this.matchLines.push(head);
+      for (const tool of tools) {
+        lines.push(t.fg("dim", truncateToWidth(` ⚙ ${tool.name}${tool.summary ? "  " + tool.summary : ""}`, rw)));
+      }
       lines.push("");
+      prevRole = m.role;
     }
 
     this.previewLines = lines;

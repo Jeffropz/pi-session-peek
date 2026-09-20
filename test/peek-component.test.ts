@@ -10,7 +10,7 @@ setLang("zh");
 
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
-const KEY = { enter: "\r", tab: "\t", up: "\x1b[A", down: "\x1b[B", bs: "\x7f", esc: "\x1b", cc: "\x03", cd: "\x04", cf: "\x06", co: "\x0f", cr: "\x12", cu: "\x15" };
+const KEY = { enter: "\r", tab: "\t", up: "\x1b[A", down: "\x1b[B", bs: "\x7f", esc: "\x1b", cc: "\x03", cd: "\x04", cf: "\x06", co: "\x0f", cr: "\x12", ct: "\x14", cu: "\x15" };
 
 function mk(cwd: string, texts: string[], ageDays: number, name = ""): PeekSession {
   const mtime = Date.now() - ageDays * 86400e3;
@@ -498,4 +498,58 @@ test("短语和正则在预览里整段高亮，排除词不高亮", () => {
   assert.equal(hit.length, 2);
   assert.ok(hit[0].includes(`\x1b[1m\x1b[4mget http\x1b[24m`), hit[0]);
   assert.ok(hit[1].includes(`\x1b[1m\x1b[4mgetHttpValue\x1b[24m`), hit[1]);
+});
+
+// 预览右栏去掉样式后的文字行
+function rightCol(c: any, width = 100): string[] {
+  c.render(width);
+  return c.previewLines.map(strip);
+}
+
+function toolFixture(): PeekSession[] {
+  const s = mk("D:/proj", ["fix the bug", "let me look", "done, fixed"], 1);
+  s.msgs[1].tools = [{ name: "read", summary: "src/a.ts" }];
+  // 只有工具调用、没写字的 AI 轮次，紧接在上一条 AI 文字后面
+  s.msgs.splice(2, 0, { role: "assistant", text: "", tools: [{ name: "bash", summary: "npm test" }, { name: "edit", summary: "" }] });
+  s.msgs[3].role = "assistant";
+  return [s];
+}
+
+test("工具调用默认不显示，只有工具调用的 AI 轮次整条跳过", () => {
+  const c = make(toolFixture(), "D:/proj");
+  const lines = rightCol(c);
+  assert.ok(!lines.some((l) => l.includes("⚙")));
+  assert.equal(lines.filter((l) => l.startsWith("🤖 AI")).length, 2);
+  assert.ok(lines.some((l) => l.includes("let me look")));
+  assert.ok(lines.some((l) => l.includes("done, fixed")));
+});
+
+test("Ctrl+T 显示工具调用摘要，纯工具轮次接在上一条 AI 正文下面不重复标签，再按一次关掉", () => {
+  const c = make(toolFixture(), "D:/proj");
+  c.handleInput(KEY.ct);
+  const lines = rightCol(c);
+  const tools = lines.filter((l) => l.includes("⚙")).map((l) => l.trim());
+  assert.deepEqual(tools, ["⚙ read  src/a.ts", "⚙ bash  npm test", "⚙ edit"]);
+  assert.equal(lines.filter((l) => l.startsWith("🤖 AI")).length, 2);
+  // 顺序：AI 标签 → 正文 → read → bash → edit → 空行 → AI 标签 → done
+  const look = lines.findIndex((l) => l.includes("let me look"));
+  const edit = lines.findIndex((l) => l.includes("⚙ edit"));
+  const done = lines.findIndex((l) => l.includes("done, fixed"));
+  assert.ok(look < edit && edit < done);
+  assert.equal(lines[edit + 1], "");
+  assert.ok(lines[edit + 2].startsWith("🤖 AI"));
+  c.handleInput(KEY.ct);
+  assert.ok(!rightCol(c).some((l) => l.includes("⚙")));
+});
+
+test("工具摘要不参与搜索和高亮", () => {
+  const c = make(toolFixture(), "D:/proj");
+  c.handleInput(KEY.ct);
+  type(c, "npm");
+  assert.equal(c.filtered.length, 0);
+  type(c, KEY.bs + KEY.bs + KEY.bs);
+  type(c, "fixed");
+  assert.equal(c.filtered.length, 1);
+  rightCol(c);
+  assert.equal(c.matchLines.length, 1);
 });
