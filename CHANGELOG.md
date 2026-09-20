@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1
 
 - `Ctrl+T` shows tool calls in the preview: one dim line per call with the tool name and its main argument (command, path, URL, query…), placed under the reply that made it. Off by default. Tool results are still not stored, and the tool lines are never searched or highlighted.
 - Assistant turns that only call tools (no text) are now kept when parsing, so with `Ctrl+T` on the preview no longer jumps from "let me check" straight to the conclusion. With it off they are skipped as before.
