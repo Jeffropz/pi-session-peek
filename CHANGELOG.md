@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 - Search syntax: `"exact phrase"` (whitespace inside the quotes matches any whitespace, including line breaks), `a|b` for either, `-word` to exclude, `name:` / `dir:` (`cwd:`) / `user:` / `ai:` (`assistant:`) to limit a term to one field, and `/regex/` for JavaScript regular expressions. Prefixes stack (`-user:"not now"`), quotes escape everything else, and an invalid regex falls back to plain text.
 - The preview highlights and counts only positive terms, and `user:` / `ai:` terms only inside messages of that role. `name:` / `dir:` terms never touch the conversation.
