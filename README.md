@@ -134,13 +134,19 @@ On Windows PowerShell: `$env:PI_SESSION_PEEK_LANG = "en"` before starting pi. Th
 
 ```text
 pi-session-peek/
-├── index.ts                 # Registers /peek and the startup flags, injects delete / rename / fork
+├── index.ts                 # Registers /peek and the startup flags, injects delete / rename / fork / copy
 ├── src/
-│   ├── peek-component.ts    # The two-pane TUI component
+│   ├── peek-component.ts    # The two-pane component: state, key and mouse routing, header / footer, pane composition
+│   ├── preview.ts           # Right pane: preview lines and hit lines for a session, initial offset, Ctrl+N/P targets
+│   ├── list.ts              # Left pane: two rows per session, viewport following
+│   ├── drag-select.ts       # Drag-selection state machine: press / drag / release / auto-scroll
+│   ├── selection.ts         # Selection geometry: ranges, inverse-video highlight, text extraction
+│   ├── layout.ts            # Pane widths and body height
 │   ├── sessions.ts          # Scans and parses session JSONL, rename / delete helpers
-│   ├── query.ts             # Query parsing, highlighting, hit snippets
+│   ├── query.ts             # Query parsing, matching, highlighting, hit snippets
 │   ├── mouse.ts             # Mouse reporting for pi's regular (non-fullscreen) mode
-│   ├── selection.ts         # Pane-confined drag selection: ranges, highlight, text extraction
+│   ├── ansi.ts              # Escape-sequence tokenising, SGR tracking, input sanitising
+│   ├── theme.ts             # The subset of pi's Theme the picker uses
 │   ├── i18n.ts              # Chinese / English UI strings and locale detection
 │   └── text.ts              # Path, time and width helpers
 ├── scripts/screenshot.mjs   # Optional: renders a synthetic screenshot from component output

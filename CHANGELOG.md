@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Internal: the picker component is split into `preview`, `list` and `drag-select` modules, escape-sequence helpers are consolidated in `ansi.ts`, and the theme is typed against pi's `Theme`. No behaviour change.
+
 ## 0.5.1
 
 - Terminal escape sequences and control characters in message text, tool arguments and session names are stripped when parsing, so a pasted colour dump or an OSC sequence in a reply can no longer break the preview layout or reach the terminal.

@@ -134,13 +134,19 @@ Windows PowerShell 里先执行 `$env:PI_SESSION_PEEK_LANG = "en"` 再启动 pi�
 
 ```text
 pi-session-peek/
-├── index.ts                 # 注册 /peek 和启动参数，注入删除 / 重命名 / 分叉
+├── index.ts                 # 注册 /peek 和启动参数，注入删除 / 重命名 / 分叉 / 复制
 ├── src/
-│   ├── peek-component.ts    # 双栏 TUI 组件
+│   ├── peek-component.ts    # 双栏组件：状态、按键和鼠标路由、头尾、双栏拼接
+│   ├── preview.ts           # 右栏：按会话生成预览行和命中行、初始滚动位置、Ctrl+N/P 跳转目标
+│   ├── list.ts              # 左栏：每个会话两行、视口跟随
+│   ├── drag-select.ts       # 拖选状态机：按下 / 拖动 / 松开 / 自动滚动
+│   ├── selection.ts         # 选区几何：区间、反显、取文字
+│   ├── layout.ts            # 分栏宽度和主体高度
 │   ├── sessions.ts          # 扫描解析会话 JSONL，重命名 / 删除
-│   ├── query.ts             # 查询解析、高亮、命中片段
+│   ├── query.ts             # 查询解析、匹配、高亮、命中片段
 │   ├── mouse.ts             # 常规（非全屏）模式下的鼠标上报
-│   ├── selection.ts         # 限定在一栏内的拖选：区间、反显、取文字
+│   ├── ansi.ts              # 转义序列分词、SGR 跟踪、输入净化
+│   ├── theme.ts             # 选择器用到的 pi Theme 子集
 │   ├── i18n.ts              # 中英文界面文案和语言检测
 │   └── text.ts              # 路径、时间、宽度工具
 ├── scripts/screenshot.mjs   # 可选：用组件渲染输出生成一张合成截图
