@@ -141,10 +141,10 @@ test("Ctrl+D 需要确认：y / Enter 执行，其他键取消", async () => {
   let deleted = 0;
   c.onDelete = async () => (deleted++, true);
   c.handleInput(KEY.cd);
-  assert.equal(c.confirmingDelete, true);
+  assert.equal(c.mode, "confirmDelete");
   assert.ok(strip(c.render(120).at(-1)).includes("删除会话"));
   c.handleInput("n");
-  assert.equal(c.confirmingDelete, false);
+  assert.equal(c.mode, "search");
   assert.equal(deleted, 0);
 
   c.handleInput(KEY.cd);
@@ -168,7 +168,7 @@ test("删除确认中按 Ctrl+C 只取消确认，不关闭", () => {
   c.onDelete = async () => true;
   c.handleInput(KEY.cd);
   c.handleInput(KEY.cc);
-  assert.equal(c.confirmingDelete, false);
+  assert.equal(c.mode, "search");
   assert.equal(cancelled, 0);
 });
 
@@ -195,9 +195,9 @@ test("删除在途时不能再删、改名、进入、分叉；回来后恢复",
   assert.equal(calls, 1);
   // 回调没回来之前
   c.handleInput(KEY.cd);
-  assert.equal(c.confirmingDelete, false);
+  assert.equal(c.mode, "search");
   c.handleInput(KEY.cr);
-  assert.equal(c.renaming, false);
+  assert.equal(c.mode, "search");
   c.handleInput(KEY.enter);
   c.handleInput(KEY.co);
   c.render(120);
@@ -234,7 +234,7 @@ test("Ctrl+R 重命名：Enter 提交，名字参与搜索", async () => {
   const calls: string[] = [];
   c.onRename = async (_s: PeekSession, name: string) => (calls.push(name), true);
   c.handleInput(KEY.cr);
-  assert.equal(c.renaming, true);
+  assert.equal(c.mode, "rename");
   assert.ok(strip(c.render(120).at(-1)).includes("重命名"));
   c.renameInput.setValue("fresh-name");
   c.handleInput(KEY.enter);
@@ -278,10 +278,10 @@ test("重命名中 Esc / Ctrl+C 只取消重命名", () => {
   c.onRename = async () => true;
   c.handleInput(KEY.cr);
   c.handleInput(KEY.esc);
-  assert.equal(c.renaming, false);
+  assert.equal(c.mode, "search");
   c.handleInput(KEY.cr);
   c.handleInput(KEY.cc);
-  assert.equal(c.renaming, false);
+  assert.equal(c.mode, "search");
   assert.equal(cancelled, 0);
 });
 
@@ -698,16 +698,16 @@ test("鼠标：删除确认中按一下就取消；改名中滚轮不换会话�
   c.onRename = async () => true;
   c.render(120);
   c.handleInput(KEY.cd);
-  assert.equal(c.confirmingDelete, true);
+  assert.equal(c.mode, "confirmDelete");
   assert.deepEqual(c.handleMouse(MOUSE("press", c.layout.lw + 5, 5)), { handled: true, capture: true, render: true });
-  assert.equal(c.confirmingDelete, false);
+  assert.equal(c.mode, "search");
 
   c.handleInput(KEY.cr);
   c.renameInput.setValue("hello");
   c.handleMouse(MOUSE("wheel", 2, 5, { wheelDelta: 1 }));
   assert.equal(c.selected, 0);
   c.handleMouse(MOUSE("click", 2, 3, { clickCount: 2 }));
-  assert.equal(c.renaming, true);
+  assert.equal(c.mode, "rename");
   const lastRow = 3 + c.layout.H + 1;
   const prefixW = visibleWidth("✏ 重命名: ");
   assert.deepEqual(c.handleMouse(MOUSE("press", prefixW + 2 + 2, lastRow)), { handled: true, render: true });

@@ -39,8 +39,8 @@ export class PeekComponent implements Component, Focusable {
   private previewLines: string[] = [];
   private matchLines: number[] = []; // 预览里含关键词的行（升序），Ctrl+N / Ctrl+P 用
   private rendered: RenderCache = new WeakMap(); // 每条消息渲染好的行，按宽度缓存
-  private confirmingDelete = false; // Ctrl+D 之后等待确认
-  private renaming = false; // Ctrl+R 之后正在输入名字
+  // 三个互斥的输入状态：搜索（默认）、Ctrl+R 之后在输入新名字、Ctrl+D 之后等待确认。改名和确认只从搜索进入、退回搜索
+  private mode: "search" | "rename" | "confirmDelete" = "search";
   private busy = false; // 删除 / 重命名的异步回调还没回来：期间不能再删、改名、进入或分叉，免得对同一个文件动两次
   private renameInput: Input;
   private cachedWidth = -1;
@@ -90,8 +90,8 @@ export class PeekComponent implements Component, Focusable {
   }
   set focused(v: boolean) {
     this._focused = v;
-    this.input.focused = v && !this.renaming;
-    this.renameInput.focused = v && this.renaming;
+    this.input.focused = v && this.mode !== "rename";
+    this.renameInput.focused = v && this.mode === "rename";
   }
 
   getQuery(): string {
@@ -157,11 +157,11 @@ export class PeekComponent implements Component, Focusable {
 
   handleInput(data: string): void {
     // 重命名输入中：Enter 提交，Esc / Ctrl+C 取消，其他键交给输入框
-    if (this.renaming) {
+    if (this.mode === "rename") {
       if (matchesKey(data, Key.enter)) {
         const s = this.filtered[this.selected];
         const name = this.renameInput.getValue().trim();
-        this.renaming = false;
+        this.mode = "search";
         this.focused = this._focused;
         this.invalidate();
         if (s && name && this.onRename && !this.busy) {
@@ -184,7 +184,7 @@ export class PeekComponent implements Component, Focusable {
         return;
       }
       if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
-        this.renaming = false;
+        this.mode = "search";
         this.focused = this._focused;
         this.invalidate();
         return;
@@ -194,8 +194,8 @@ export class PeekComponent implements Component, Focusable {
       return;
     }
     // 删除确认中：y / Enter 执行，其他任何键取消
-    if (this.confirmingDelete) {
-      this.confirmingDelete = false;
+    if (this.mode === "confirmDelete") {
+      this.mode = "search";
       this.invalidate();
       if (data === "y" || data === "Y" || matchesKey(data, Key.enter)) {
         const s = this.filtered[this.selected];
@@ -233,7 +233,7 @@ export class PeekComponent implements Component, Focusable {
     }
     if (matchesKey(data, Key.ctrl("d"))) {
       if (this.filtered.length && this.onDelete && !this.busy) {
-        this.confirmingDelete = true;
+        this.mode = "confirmDelete";
         this.invalidate();
       }
       return;
@@ -241,7 +241,7 @@ export class PeekComponent implements Component, Focusable {
     if (matchesKey(data, Key.ctrl("r"))) {
       const s = this.filtered[this.selected];
       if (s && this.onRename && !this.busy) {
-        this.renaming = true;
+        this.mode = "rename";
         this.renameInput.setValue(s.name || "");
         this.focused = this._focused;
         this.invalidate();
@@ -325,7 +325,7 @@ export class PeekComponent implements Component, Focusable {
   // 硬件光标在组件内的行号：搜索框在第 1 行，改名时在最后一行。常规模式的鼠标桥接靠它算组件顶行
   cursorRow(): number | undefined {
     if (!this._focused || !this.layout.H) return undefined;
-    return this.renaming ? BODY_TOP + this.layout.H + 1 : 1;
+    return this.mode === "rename" ? BODY_TOP + this.layout.H + 1 : 1;
   }
 
   // 鼠标：左栏按下选中、双击进入、滚轮换选中项；右栏滚轮滚预览；点头部"范围"切换；点输入框移光标；
@@ -342,10 +342,10 @@ export class PeekComponent implements Component, Focusable {
     if (ev.type === "wheel") {
       const delta = ev.wheelDelta ?? 0;
       if (!delta) return undefined;
-      let changed = this.confirmingDelete; // 和按键一样，滚一下就算取消确认，免得删错换过去的那条
-      this.confirmingDelete = false;
+      // 和按键一样，滚一下就算取消确认，免得删错换过去的那条。只退出确认，改名中滚轮不退出改名
+      let changed = this.cancelConfirm();
       if (inList) {
-        if (!this.renaming) {
+        if (this.mode !== "rename") {
           // 改名中换了会话就改错对象了
           const next = Math.max(0, Math.min(this.filtered.length - 1, this.selected + delta));
           if (next !== this.selected) {
@@ -386,17 +386,16 @@ export class PeekComponent implements Component, Focusable {
       // 单击在 press 里已经选中了，双击才进入
       const s = this.filtered[itemAt()];
       if (!s) return undefined;
-      if (!this.renaming && !this.busy && (ev.clickCount ?? 1) >= 2) this.onResume?.(s);
+      if (this.mode !== "rename" && !this.busy && (ev.clickCount ?? 1) >= 2) this.onResume?.(s);
       return { handled: true, render: false };
     }
     if (ev.type !== "press") return undefined;
 
     // 删除确认和已有的选区：点一下就没了，和按键一样
-    let changed = this.confirmingDelete || this.activeSel() !== undefined;
-    this.confirmingDelete = false;
+    let changed = this.cancelConfirm() || this.activeSel() !== undefined;
     this.clearSelection();
     let handled = changed;
-    if (this.renaming) {
+    if (this.mode === "rename") {
       if (ev.y === BODY_TOP + H + 1) {
         // 改名行：点哪里光标就去哪里
         this.renameInput.handleMouse({ ...ev, x: ev.x - visibleWidth(msg("renamePrefix")), y: 0 });
@@ -430,6 +429,13 @@ export class PeekComponent implements Component, Focusable {
     if (!handled) return undefined;
     if (changed) this.invalidate();
     return inBody ? { handled: true, capture: true, render: changed } : { handled: true, render: changed };
+  }
+
+  // 鼠标滚轮 / 按下时退出删除确认（只退出确认，改名状态不动）。返回有没有退出
+  private cancelConfirm(): boolean {
+    if (this.mode !== "confirmDelete") return false;
+    this.mode = "search";
+    return true;
   }
 
   // 屏幕位置换成某一栏的内容坐标：行是内容的绝对行号，列夹在这一栏里，拖到栏外也只选栏内的字
@@ -618,11 +624,11 @@ export class PeekComponent implements Component, Focusable {
 
     // 底部：重命名和删除确认时换成对应的操作行，复制结果和选区提示也在这里
     out.push(t.fg("borderMuted", "─".repeat(width)));
-    if (this.renaming) {
+    if (this.mode === "rename") {
       const prefix = msg("renamePrefix");
       const inputLine = this.renameInput.render(Math.max(10, width - visibleWidth(prefix)))[0] ?? "";
       out.push(truncateToWidth(t.fg("warning", prefix) + inputLine, width));
-    } else if (this.confirmingDelete) {
+    } else if (this.mode === "confirmDelete") {
       const s = this.filtered[this.selected];
       const desc = s ? `${fmtTime(s.time, true)} ${s.first.slice(0, 30)}` : "";
       out.push(
