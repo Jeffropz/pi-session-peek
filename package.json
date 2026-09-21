@@ -1,6 +1,6 @@
 {
   "name": "pi-session-peek",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Pi extension: search session history in a two-pane picker with full conversation preview, then resume or fork.",
   "type": "module",
   "license": "MIT",
