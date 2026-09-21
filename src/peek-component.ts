@@ -1,7 +1,6 @@
 import {
   Input,
   Key,
-  Markdown,
   matchesKey,
   truncateToWidth,
   visibleWidth,
@@ -14,14 +13,15 @@ import {
 import { msg } from "./i18n.ts";
 import { BODY_TOP, bodyRows, paneWidths, SEP } from "./layout.ts";
 import { buildList, followSelection, listRows, visibleItems } from "./list.ts";
-import { anyMatch, highlight, lineHasMatch, matchesSession, parseQuery, roleTerms, type ParsedQuery, type RoleTerms } from "./query.ts";
+import { buildPreview, initialOffset, nextMatchTarget, type RenderCache } from "./preview.ts";
+import { matchesSession, parseQuery, roleTerms, type ParsedQuery, type RoleTerms } from "./query.ts";
 import { bounds, highlightColumns, rowColumns, selectionText, type Cell, type Pane, type Selection } from "./selection.ts";
-import type { PeekMsg, PeekSession } from "./sessions.ts";
+import type { PeekSession } from "./sessions.ts";
 import { fmtTime, normPath, padEndVisible } from "./text.ts";
 import type { PeekTheme } from "./theme.ts";
 
 // 双栏选择器。文件操作（删除 / 重命名 / 分叉）不在这里做，由 index.ts 通过回调注入。
-// 几何常量在 layout.ts，左栏在 list.ts
+// 几何常量在 layout.ts，左栏在 list.ts，右栏在 preview.ts
 
 const WHEEL_LINES = 3; // 滚轮每格滚几行预览，和 Shift+↑↓ 一样
 const AUTO_SCROLL_MS = 50; // 拖选拖出预览上下边时自动滚动的节奏，和 pi-tui 一样
@@ -38,7 +38,7 @@ export class PeekComponent implements Component, Focusable {
   private showTools = false; // Ctrl+T：预览里显示每次工具调用的一行摘要
   private previewLines: string[] = [];
   private matchLines: number[] = []; // 预览里含关键词的行（升序），Ctrl+N / Ctrl+P 用
-  private rendered = new WeakMap<PeekMsg, { w: number; lines: string[] }>(); // 每条消息渲染好的行，按宽度缓存
+  private rendered: RenderCache = new WeakMap(); // 每条消息渲染好的行，按宽度缓存
   private confirmingDelete = false; // Ctrl+D 之后等待确认
   private renaming = false; // Ctrl+R 之后正在输入名字
   private busy = false; // 删除 / 重命名的异步回调还没回来：期间不能再删、改名、进入或分叉，免得对同一个文件动两次
@@ -518,19 +518,12 @@ export class PeekComponent implements Component, Focusable {
     this.requestRender?.();
   }
 
-  // 预览里跳到当前视口之外的下一个 / 上一个命中行，到头了回绕。同一屏里的多个命中算一处，
-  // 否则一段里连着几行都命中要按好几次才过得去
+  // 预览里跳到当前视口之外的下一个 / 上一个命中行，到头了回绕
   private jumpMatch(dir: 1 | -1): void {
-    if (!this.matchLines.length) return;
     const H = this.bodyHeight();
     const top = this.previewOffset;
     const bottom = Math.min(top + H, this.previewLines.length) - 1;
-    let target: number | undefined;
-    if (dir === 1) {
-      target = this.matchLines.find((l) => l > bottom) ?? this.matchLines[0];
-    } else {
-      target = [...this.matchLines].reverse().find((l) => l < top) ?? this.matchLines[this.matchLines.length - 1];
-    }
+    const target = nextMatchTarget(this.matchLines, top, bottom, dir);
     if (target !== undefined) {
       this.previewOffset = Math.max(0, target - 2);
       this.invalidate();
@@ -543,122 +536,16 @@ export class PeekComponent implements Component, Focusable {
     return { rt, hasBody: rt.user.length > 0 || rt.assistant.length > 0 };
   }
 
-  // 用 pi 自己的 Markdown 组件渲染一条消息，和主界面里的对话长得一样；参数照抄 pi 的
-  // user-message / assistant-message 组件。渲染比较贵，按消息和宽度缓存，换关键词时不用重来
-  private renderMsg(m: PeekMsg, rw: number): string[] {
-    const hit = this.rendered.get(m);
-    if (hit && hit.w === rw) return hit.lines;
-    const t = this.theme;
-    const md =
-      m.role === "user"
-        ? new Markdown(
-            m.text,
-            1,
-            0,
-            this.mdTheme,
-            { color: (s) => t.fg("userMessageText", s), bgColor: (s) => t.bg("userMessageBg", s) },
-            { preserveOrderedListMarkers: true, preserveBackslashEscapes: true },
-          )
-        : new Markdown(m.text, 1, 0, this.mdTheme);
-    const lines = md.render(rw);
-    this.rendered.set(m, { w: rw, lines });
-    return lines;
-  }
-
-  // 右栏。有关键词时滚到第一个命中处，没有时滚到底部看最新消息
-  private buildPreview(rw: number): void {
-    const t = this.theme;
+  // 右栏。预览键（会话 + 关键词 + 宽度 + 工具开关）没变就复用；变了重建，滚动位置放到首个命中处或底部
+  private rebuildPreview(rw: number, rt: RoleTerms): void {
     const s = this.filtered[this.selected];
     const key = s ? `${s.path}|${this.getQuery()}|${rw}|${this.showTools ? "t" : ""}` : "none";
     if (key === this.previewKey) return;
     this.previewKey = key;
-    this.matchLines = [];
-
-    if (!s) {
-      this.previewLines = [t.fg("dim", msg("noMatch"))];
-      this.previewOffset = 0;
-      return;
-    }
-
-    const lines: string[] = [];
-    // 消息数只算有文字的，纯工具轮次不计
-    const textCount = s.msgs.reduce((n, m) => n + (m.text ? 1 : 0), 0);
-    lines.push(
-      truncateToWidth(
-        t.fg("dim", `${s.cwd} • ${msg("msgCount", { n: textCount })}${s.name ? " • " + s.name : ""}`),
-        rw,
-      ),
-    );
-    lines.push("");
-
-    const rt = roleTerms(this.query().terms);
-    const hasBody = rt.user.length > 0 || rt.assistant.length > 0;
-    const MAX_MSGS = 500;
-    const truncated = s.msgs.length > MAX_MSGS;
-    const msgs = truncated ? s.msgs.slice(-MAX_MSGS) : s.msgs;
-    if (truncated) {
-      lines.push(t.fg("dim", msg("truncated", { n: MAX_MSGS })));
-      lines.push("");
-    }
-    if (hasBody && !msgs.some((m) => anyMatch(m.text, rt[m.role]))) {
-      const inTruncated = truncated && s.msgs.some((m) => anyMatch(m.text, rt[m.role]));
-      lines.push(
-        t.fg(
-          "warning",
-          inTruncated ? msg("hitInTruncated") : msg("hitOnlyMeta"),
-        ),
-      );
-      lines.push("");
-    }
-
-    // 用户消息整块背景色，AI 消息只有一条细线标签
-    const fillLabel = (label: string): string => {
-      const w = visibleWidth(label);
-      return truncateToWidth(label + " " + "─".repeat(Math.max(2, rw - w - 1)), rw);
-    };
-
-    let prevRole: PeekMsg["role"] | undefined; // 上一条画出来的消息的角色
-    for (const m of msgs) {
-      const tools = this.showTools ? (m.tools ?? []) : [];
-      if (!m.text && !tools.length) continue; // 工具隐藏时，只有工具调用的 AI 轮次整条跳过
-      const terms = rt[m.role]; // user: 的词只在用户消息里高亮，ai: 的只在 AI 回复里
-      const isMatch = terms.length > 0 && anyMatch(m.text, terms);
-      // 紧跟在 AI 文字后面、只有工具调用的轮次不重复画标签，接在上一条正文下面，看起来是同一轮
-      const continues = m.role === "assistant" && prevRole === "assistant" && !m.text;
-      if (continues) {
-        lines.pop();
-      } else if (m.role === "user") {
-        lines.push(
-          t.bg("userMessageBg", padEndVisible(t.bold(t.fg("accent", fillLabel(msg("you")))), rw)),
-        );
-      } else {
-        lines.push(t.fg("muted", fillLabel(msg("ai"))));
-      }
-      const head = lines.length - 1;
-      // 先渲染再高亮：往 markdown 源码里插转义码会把链接、代码块的语法弄坏
-      const before = this.matchLines.length;
-      if (m.text) {
-        for (const l of this.renderMsg(m, rw)) {
-          if (isMatch && lineHasMatch(l, terms)) this.matchLines.push(lines.length);
-          lines.push(isMatch ? highlight(l, terms, t) : l);
-        }
-      }
-      // 关键词被折行拆开时哪一行都找不到，退回到消息标题行，别把这条消息漏掉
-      if (isMatch && this.matchLines.length === before) this.matchLines.push(head);
-      for (const tool of tools) {
-        lines.push(t.fg("dim", truncateToWidth(` ⚙ ${tool.name}${tool.summary ? "  " + tool.summary : ""}`, rw)));
-      }
-      lines.push("");
-      prevRole = m.role;
-    }
-
-    this.previewLines = lines;
-
-    if (this.matchLines.length) {
-      this.previewOffset = Math.max(0, this.matchLines[0] - 2);
-    } else {
-      this.previewOffset = Math.max(0, lines.length - this.bodyHeight());
-    }
+    const p = buildPreview(s, rt, rw, this.showTools, this.theme, this.mdTheme, this.rendered);
+    this.previewLines = p.lines;
+    this.matchLines = p.matchLines;
+    this.previewOffset = initialOffset(p, this.bodyHeight());
   }
 
   render(width: number): string[] {
@@ -692,8 +579,8 @@ export class PeekComponent implements Component, Focusable {
     out.push(t.fg("borderMuted", "─".repeat(width)));
 
     // 双栏
-    this.buildPreview(rw);
     const { rt, hasBody } = this.listTerms();
+    this.rebuildPreview(rw, rt);
     this.listOffset = followSelection(this.selected, this.listOffset, visibleItems(H));
     const leftRows = buildList(this.filtered, this.selected, this.listOffset, H, lw, rt, hasBody, t);
 
