@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { setLang } from "../src/i18n.ts";
+import { visibleItems } from "../src/list.ts";
 import { PeekComponent } from "../src/peek-component.ts";
 import type { PeekSession } from "../src/sessions.ts";
 import { mdTheme, strip, theme } from "./helpers.ts";
@@ -645,20 +646,39 @@ test("鼠标：没画过之前不处理；左栏按下选中，同一项再按�
   assert.equal(c.selected, 2);
 });
 
-test("鼠标：左栏滚轮换选中项并到边界夹住，右栏滚轮滚预览三行一格", () => {
+test("鼠标：左栏滚轮只滚视图，选中项不动并到边界夹住；↑↓ 把选中项带回视野；右栏滚轮滚预览三行一格", () => {
   const long = mk("D:/proj", Array.from({ length: 60 }, (_, i) => `message number ${i} ${"x".repeat(80)}`), 1);
-  const c = make([...fixture(), long], "D:/nowhere");
+  const probe = make([long], "D:/nowhere");
+  const visible = visibleItems(probe.bodyHeight()); // 可见项数按当前终端高度现算
+  const many = Array.from({ length: visible + 6 }, (_, i) => mk(`D:/dir${i}`, [`item ${i}`], i + 1));
+  const c = make([...many, long], "D:/nowhere");
   c.render(120);
   const lw = c.layout.lw;
+  assert.equal(c.listOffset, 0);
   assert.deepEqual(c.handleMouse(MOUSE("wheel", 2, 5, { wheelDelta: 1 })), { handled: true, render: true });
-  assert.equal(c.selected, 1);
-  c.handleMouse(MOUSE("wheel", 2, 5, { wheelDelta: -5 }));
-  assert.equal(c.selected, 0);
+  assert.equal(c.listOffset, 1);
+  assert.equal(c.selected, 0, "selection stays");
+  c.render(120);
+  assert.equal(c.listOffset, 1, "render does not snap back to the selection");
+  assert.ok(!c.render(120).slice(3, 3 + c.layout.H).some((l: string) => strip(l).startsWith("›")), "selected item scrolled out of view");
+  c.handleMouse(MOUSE("wheel", 2, 5, { wheelDelta: 99 }));
+  assert.equal(c.listOffset, 7, "clamped so the last item is visible");
+  c.handleMouse(MOUSE("wheel", 2, 5, { wheelDelta: -999 }));
+  assert.equal(c.listOffset, 0);
   assert.deepEqual(c.handleMouse(MOUSE("wheel", 2, 5, { wheelDelta: -1 })), { handled: true, render: false });
   c.handleMouse(MOUSE("wheel", 2, 5, { wheelDelta: 99 }));
-  assert.equal(c.selected, 4);
-
+  c.handleInput(KEY.down);
   c.render(120);
+  assert.equal(c.selected, 1);
+  assert.equal(c.listOffset, 1, "arrow key brings the selection back into view");
+
+  // 右栏：先把视图滚到底，最后一项（long）在主体第 2*(visible-1) 行，点它
+  c.handleMouse(MOUSE("wheel", 2, 5, { wheelDelta: 99 }));
+  assert.equal(c.listOffset, 7);
+  c.handleMouse(MOUSE("press", 2, 3 + 2 * (visible - 1)));
+  c.render(120);
+  assert.equal(c.selected, visible + 6);
+  assert.equal(c.listOffset, 7, "click inside the view does not scroll");
   const bottom = c.previewOffset;
   assert.ok(bottom > 6);
   assert.deepEqual(c.handleMouse(MOUSE("wheel", lw + 10, 5, { wheelDelta: -1 })), { handled: true, render: true });
@@ -668,7 +688,7 @@ test("鼠标：左栏滚轮换选中项并到边界夹住，右栏滚轮滚预�
   assert.equal(c.previewOffset, bottom, "clamped at the end");
   c.handleMouse(MOUSE("wheel", lw + 10, 5, { wheelDelta: -999 }));
   assert.equal(c.previewOffset, 0);
-  assert.equal(c.selected, 4, "preview wheel leaves the selection alone");
+  assert.equal(c.selected, visible + 6, "preview wheel leaves the selection alone");
 });
 
 test("鼠标：点头部的范围字样切换范围，点别处不管；点搜索框移动光标", () => {
@@ -692,7 +712,7 @@ test("鼠标：点头部的范围字样切换范围，点别处不管；点搜�
   assert.equal(c.selected, 0);
 });
 
-test("鼠标：删除确认中按一下就取消；改名中滚轮不换会话，点改名行移动光标", () => {
+test("鼠标：删除确认中按一下就取消；改名中滚轮只滚列表不换会话，点改名行移动光标", () => {
   const c = make();
   c.onDelete = async () => true;
   c.onRename = async () => true;

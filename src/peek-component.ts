@@ -25,6 +25,7 @@ import type { PeekTheme } from "./theme.ts";
 // 几何常量在 layout.ts，左栏在 list.ts，右栏在 preview.ts，拖选状态机在 drag-select.ts
 
 const WHEEL_LINES = 3; // 滚轮每格滚几行预览，和 Shift+↑↓ 一样
+const WHEEL_ITEMS = 1; // 滚轮每格滚几个列表项（每项两行）。只滚视图，不换选中项，像浏览器的滚动条
 const HINT_MS = 1500; // 底部"已复制"提示停留时间
 
 export class PeekComponent implements Component, Focusable {
@@ -33,6 +34,7 @@ export class PeekComponent implements Component, Focusable {
   private filtered: PeekSession[] = [];
   private selected = 0;
   private listOffset = 0;
+  private followSel = true; // 下次 render 把选中项带回视野：换选中项、重新过滤、删除后置真，滚轮滚列表不置
   private previewOffset = 0;
   private previewKey = ""; // 预览缓存的键（会话 + 关键词 + 宽度 + 工具开关），置空强制重建
   private showTools = false; // Ctrl+T：预览里显示每次工具调用的一行摘要
@@ -125,13 +127,15 @@ export class PeekComponent implements Component, Focusable {
     const idx = prev ? out.indexOf(prev) : -1;
     this.selected = idx >= 0 ? idx : keepSelection ? Math.min(this.selected, Math.max(0, out.length - 1)) : 0;
     if (!keepSelection) this.listOffset = 0;
+    this.followSel = true;
     this.previewKey = "";
     this.drag.clear();
   }
 
-  // 换选中的会话：预览重建，拖选的选区作废
+  // 换选中的会话：预览重建，拖选的选区作废，视野跟过去
   private select(idx: number): void {
     this.selected = idx;
+    this.followSel = true;
     this.previewKey = "";
     this.drag.clear();
   }
@@ -201,6 +205,7 @@ export class PeekComponent implements Component, Focusable {
               if (i >= 0) this.filtered.splice(i, 1);
               // 选中位置留在原地
               this.selected = Math.min(this.selected, Math.max(0, this.filtered.length - 1));
+              this.followSel = true;
               this.previewKey = "";
               this.drag.clear();
             }
@@ -334,16 +339,15 @@ export class PeekComponent implements Component, Focusable {
     if (ev.type === "wheel") {
       const delta = ev.wheelDelta ?? 0;
       if (!delta) return undefined;
-      // 和按键一样，滚一下就算取消确认，免得删错换过去的那条。只退出确认，改名中滚轮不退出改名
+      // 和按键一样，滚一下就算取消确认。只退出确认，改名中滚轮不退出改名
       let changed = this.cancelConfirm();
       if (inList) {
-        if (this.mode !== "rename") {
-          // 改名中换了会话就改错对象了
-          const next = Math.max(0, Math.min(this.filtered.length - 1, this.selected + delta));
-          if (next !== this.selected) {
-            this.select(next);
-            changed = true;
-          }
+        // 只滚视图，选中项不动；↑↓、点击、重新过滤会把选中项带回视野
+        const maxOff = Math.max(0, this.filtered.length - visibleItems(H));
+        const next = Math.max(0, Math.min(maxOff, this.listOffset + delta * WHEEL_ITEMS));
+        if (next !== this.listOffset) {
+          this.listOffset = next;
+          changed = true;
         }
       } else {
         const maxOff = Math.max(0, this.previewLines.length - H);
@@ -361,7 +365,7 @@ export class PeekComponent implements Component, Focusable {
       if (!d.dragging || !d.sel || ev.button !== "left") return undefined;
       const pane = d.sel.pane;
       const changed = d.move(ev.x, bodyRow);
-      // 右栏拖出上下边就自动滚；左栏不滚，列表是跟着选中项走的
+      // 右栏拖出上下边就自动滚；左栏不滚
       if (pane === "preview") d.autoScroll(bodyRow < 0 ? -1 : bodyRow >= H ? 1 : 0);
       if (changed) this.invalidate();
       return { handled: true, render: changed };
@@ -523,7 +527,13 @@ export class PeekComponent implements Component, Focusable {
     // 双栏
     const { rt, hasBody } = this.listTerms();
     this.rebuildPreview(rw, rt);
-    this.listOffset = followSelection(this.selected, this.listOffset, visibleItems(H));
+    // 选中项变了才把视野挪过去；滚轮滚出去的视野留着。列表变短、终端变高后别在底下留空白
+    const visible = visibleItems(H);
+    if (this.followSel) {
+      this.listOffset = followSelection(this.selected, this.listOffset, visible);
+      this.followSel = false;
+    }
+    this.listOffset = Math.min(this.listOffset, Math.max(0, this.filtered.length - visible));
     const leftRows = buildList(this.filtered, this.selected, this.listOffset, H, lw, rt, hasBody, t);
 
     const maxOff = Math.max(0, this.previewLines.length - H);

@@ -80,7 +80,7 @@ In TUI mode, run `/peek` and start typing. Press `Enter` on a session to continu
 | --- | --- |
 | Click a session in the list | Select it |
 | Double-click a session | Resume it (same as `Enter`) |
-| Wheel over the list | Move the selection |
+| Wheel over the list | Scroll the list like a scrollbar; the selection stays where it is. `↑` `↓`, a click or a new filter bring it back into view. |
 | Wheel over the preview | Scroll the preview three lines per notch (`Alt` for five times faster) |
 | Click the scope label in the header | Toggle current directory tree ↔ all projects (same as `Tab`) |
 | Click the search box or the rename line | Move the cursor |
