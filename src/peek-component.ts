@@ -16,6 +16,7 @@ import { anyMatch, highlight, lineHasMatch, matchesSession, parseQuery, roleTerm
 import { bounds, highlightColumns, rowColumns, selectionText, type Cell, type Pane, type Selection } from "./selection.ts";
 import type { PeekMsg, PeekSession } from "./sessions.ts";
 import { fmtTime, normPath, padEndVisible } from "./text.ts";
+import type { PeekTheme } from "./theme.ts";
 
 // 双栏选择器。文件操作（删除 / 重命名 / 分叉）不在这里做，由 index.ts 通过回调注入
 
@@ -69,7 +70,7 @@ export class PeekComponent implements Component, Focusable {
   constructor(
     private all: PeekSession[],
     private currentCwd: string,
-    private theme: any,
+    private theme: PeekTheme,
     private mdTheme: MarkdownTheme,
     private termRows: number,
     initialQuery: string,

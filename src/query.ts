@@ -1,5 +1,6 @@
 import { msg, type MsgKey } from "./i18n.ts";
 import type { PeekMsg, PeekSession } from "./sessions.ts";
+import { stylePrefix, type PeekTheme } from "./theme.ts";
 
 // 搜索框语法。空白分隔多个词，全部满足才算（AND）。每个词可以是：
 //   foo            子串，大小写不敏感
@@ -168,13 +169,6 @@ function nextMatch(text: string, terms: Term[], from: number): [number, number] 
 // pi-tui 会产生的三类转义序列：CSI（颜色等）、OSC（超链接）、APC
 const ESC_RE = /\x1b\[[0-9;?]*[A-Za-z]|\x1b[\]_][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 
-// 把样式函数拆出前缀，pi 的 Markdown 组件也是这么做的
-function stylePrefix(fn: (s: string) => string): string {
-  const s = fn(" ");
-  const i = s.indexOf(" ");
-  return i >= 0 ? s.slice(0, i) : "";
-}
-
 // 只跟踪高亮会碰到的几项：前景色、粗体 / 暗淡、下划线
 interface Sgr {
   fg: string;
@@ -217,7 +211,7 @@ export function lineHasMatch(line: string, terms: Term[]): boolean {
 // 输入可以是已经渲染过、带样式的行：转义序列不参与匹配也不会被切断；高亮结束时把原来的
 // 前景色 / 粗体 / 下划线恢复回去，所以放在标题、链接等样式里面也不会把后面的文字弄丢样式。
 // 不用主题自带的 searchMatchBg：dark/light 主题里它和 selectedBg 同色，看不出来
-export function highlight(line: string, terms: Term[], theme: any): string {
+export function highlight(line: string, terms: Term[], theme: PeekTheme): string {
   if (!terms.length || !line) return line;
 
   // 拆成可见文本和转义序列两类片段
