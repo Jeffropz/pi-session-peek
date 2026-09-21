@@ -11,20 +11,20 @@ import {
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import { msg } from "./i18n.ts";
-import { BODY_TOP, bodyRows, paneWidths, SEP } from "./layout.ts";
+import { DragSelect } from "./drag-select.ts";
+import { BODY_TOP, bodyRows, paneWidths } from "./layout.ts";
 import { buildList, followSelection, listRows, visibleItems } from "./list.ts";
 import { buildPreview, initialOffset, nextMatchTarget, type RenderCache } from "./preview.ts";
 import { matchesSession, parseQuery, roleTerms, type ParsedQuery, type RoleTerms } from "./query.ts";
-import { bounds, highlightColumns, rowColumns, selectionText, type Cell, type Pane, type Selection } from "./selection.ts";
+import { bounds, highlightColumns, rowColumns, selectionText, type Selection } from "./selection.ts";
 import type { PeekSession } from "./sessions.ts";
 import { fmtTime, normPath, padEndVisible } from "./text.ts";
 import type { PeekTheme } from "./theme.ts";
 
 // 双栏选择器。文件操作（删除 / 重命名 / 分叉）不在这里做，由 index.ts 通过回调注入。
-// 几何常量在 layout.ts，左栏在 list.ts，右栏在 preview.ts
+// 几何常量在 layout.ts，左栏在 list.ts，右栏在 preview.ts，拖选状态机在 drag-select.ts
 
 const WHEEL_LINES = 3; // 滚轮每格滚几行预览，和 Shift+↑↓ 一样
-const AUTO_SCROLL_MS = 50; // 拖选拖出预览上下边时自动滚动的节奏，和 pi-tui 一样
 const HINT_MS = 1500; // 底部"已复制"提示停留时间
 
 export class PeekComponent implements Component, Focusable {
@@ -47,12 +47,16 @@ export class PeekComponent implements Component, Focusable {
   private cachedLines: string[] = [];
   private layout = { lw: 0, rw: 0, H: 0 }; // 最近一次 render 的分栏尺寸，鼠标定位用
   private scopeSpan: [number, number] = [0, 0]; // 头部"范围"字样占的列区间，点击切换范围
-  private sel?: Selection; // 鼠标拖出来的选区，只在一栏里
-  private dragging = false; // 左键还按着
-  private selMoved = false; // 按下之后拖过没有；没拖过的选区不显示也不算数（那是单击）
-  private dragX = 0; // 最近一次拖动的列，自动滚动时焦点跟着它
-  private autoScrollDir = 0; // 拖出预览上下边：-1 往上 1 往下
-  private autoScrollTimer?: ReturnType<typeof setInterval>;
+  // 拖选状态机。分栏尺寸和滚动位置惰性从组件读，自动滚动时把新的预览偏移写回来
+  private drag = new DragSelect({
+    geometry: () => ({ ...this.layout, listOffset: this.listOffset, previewOffset: this.previewOffset }),
+    previewLength: () => this.previewLines.length,
+    setPreviewOffset: (n) => void (this.previewOffset = n),
+    changed: () => {
+      this.invalidate();
+      this.requestRender?.();
+    },
+  });
   private hint?: { text: string; ok: boolean }; // 底部一闪而过的复制结果
   private hintTimer?: ReturnType<typeof setTimeout>;
   private _focused = false;
@@ -122,30 +126,18 @@ export class PeekComponent implements Component, Focusable {
     this.selected = idx >= 0 ? idx : keepSelection ? Math.min(this.selected, Math.max(0, out.length - 1)) : 0;
     if (!keepSelection) this.listOffset = 0;
     this.previewKey = "";
-    this.clearSelection();
+    this.drag.clear();
   }
 
   // 换选中的会话：预览重建，拖选的选区作废
   private select(idx: number): void {
     this.selected = idx;
     this.previewKey = "";
-    this.clearSelection();
-  }
-
-  private clearSelection(): void {
-    this.sel = undefined;
-    this.dragging = false;
-    this.selMoved = false;
-    this.stopAutoScroll();
-  }
-
-  // 拖过的才算选区，只按下没拖的是单击
-  private activeSel(): Selection | undefined {
-    return this.sel && this.selMoved ? this.sel : undefined;
+    this.drag.clear();
   }
 
   dispose(): void {
-    this.stopAutoScroll();
+    this.drag.dispose();
     if (this.hintTimer) clearTimeout(this.hintTimer);
     this.hintTimer = undefined;
     this.onDispose?.();
@@ -210,7 +202,7 @@ export class PeekComponent implements Component, Focusable {
               // 选中位置留在原地
               this.selected = Math.min(this.selected, Math.max(0, this.filtered.length - 1));
               this.previewKey = "";
-              this.clearSelection();
+              this.drag.clear();
             }
           }).catch(() => {
           }).finally(() => {
@@ -224,7 +216,7 @@ export class PeekComponent implements Component, Focusable {
     }
     if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
       // 有拖选的选区时 Ctrl+C 是复制，和终端里的习惯一样；没有才是关闭
-      if (matchesKey(data, Key.ctrl("c")) && this.activeSel()) {
+      if (matchesKey(data, Key.ctrl("c")) && this.drag.active()) {
         this.copySelection();
         return;
       }
@@ -293,7 +285,7 @@ export class PeekComponent implements Component, Focusable {
     if (matchesKey(data, Key.ctrl("t"))) {
       this.showTools = !this.showTools;
       this.previewKey = "";
-      this.clearSelection();
+      this.drag.clear();
       this.invalidate();
       return;
     }
@@ -365,21 +357,18 @@ export class PeekComponent implements Component, Focusable {
       return { handled: true, render: changed };
     }
     if (ev.type === "drag") {
-      if (!this.dragging || !this.sel || ev.button !== "left") return undefined;
-      this.dragX = ev.x;
-      const changed = this.dragTo(ev.x, ev.y);
-      if (changed) this.selMoved = true;
+      const d = this.drag;
+      if (!d.dragging || !d.sel || ev.button !== "left") return undefined;
+      const pane = d.sel.pane;
+      const changed = d.move(ev.x, bodyRow);
       // 右栏拖出上下边就自动滚；左栏不滚，列表是跟着选中项走的
-      if (this.sel.pane === "preview") this.setAutoScroll(bodyRow < 0 ? -1 : bodyRow >= H ? 1 : 0);
+      if (pane === "preview") d.autoScroll(bodyRow < 0 ? -1 : bodyRow >= H ? 1 : 0);
       if (changed) this.invalidate();
       return { handled: true, render: changed };
     }
     if (ev.button !== "left") return undefined;
     if (ev.type === "release") {
-      if (!this.dragging) return undefined;
-      this.dragging = false;
-      this.stopAutoScroll();
-      if (!this.selMoved) this.sel = undefined; // 没拖过就是单击
+      if (!this.drag.release()) return undefined;
       return { handled: true, render: false };
     }
     if (ev.type === "click") {
@@ -392,8 +381,8 @@ export class PeekComponent implements Component, Focusable {
     if (ev.type !== "press") return undefined;
 
     // 删除确认和已有的选区：点一下就没了，和按键一样
-    let changed = this.cancelConfirm() || this.activeSel() !== undefined;
-    this.clearSelection();
+    let changed = this.cancelConfirm() || this.drag.active() !== undefined;
+    this.drag.clear();
     let handled = changed;
     if (this.mode === "rename") {
       if (ev.y === BODY_TOP + H + 1) {
@@ -419,11 +408,7 @@ export class PeekComponent implements Component, Focusable {
     }
     if (inBody) {
       // 两栏里按下都可能是拖选的起点，拖起来才算数；接管后面的拖动和松开
-      const pane: Pane = inList ? "list" : "preview";
-      const cell = this.cellAt(pane, ev.x, bodyRow);
-      this.sel = { pane, anchor: cell, focus: { ...cell } };
-      this.dragging = true;
-      this.dragX = ev.x;
+      this.drag.begin(inList ? "list" : "preview", ev.x, bodyRow);
       handled = true;
     }
     if (!handled) return undefined;
@@ -436,55 +421,6 @@ export class PeekComponent implements Component, Focusable {
     if (this.mode !== "confirmDelete") return false;
     this.mode = "search";
     return true;
-  }
-
-  // 屏幕位置换成某一栏的内容坐标：行是内容的绝对行号，列夹在这一栏里，拖到栏外也只选栏内的字
-  private cellAt(pane: Pane, x: number, bodyRow: number): Cell {
-    const { lw, rw, H } = this.layout;
-    const row = Math.max(0, Math.min(H - 1, bodyRow));
-    if (pane === "list") return { row: this.listOffset * 2 + row, col: Math.max(0, Math.min(lw - 1, x)) };
-    return { row: this.previewOffset + row, col: Math.max(0, Math.min(rw - 1, x - lw - SEP)) };
-  }
-
-  // 拖到某个位置：焦点跟过去。返回有没有变
-  private dragTo(x: number, y: number): boolean {
-    if (!this.sel) return false;
-    const cell = this.cellAt(this.sel.pane, x, y - BODY_TOP);
-    if (cell.row === this.sel.focus.row && cell.col === this.sel.focus.col) return false;
-    this.sel.focus = cell;
-    return true;
-  }
-
-  private setAutoScroll(dir: number): void {
-    this.autoScrollDir = dir;
-    if (!dir) {
-      this.stopAutoScroll();
-      return;
-    }
-    if (this.autoScrollTimer) return;
-    this.autoScrollTimer = setInterval(() => this.autoScrollTick(), AUTO_SCROLL_MS);
-    this.autoScrollTimer.unref?.();
-  }
-
-  // 每次滚一行，焦点跟着指针：指针在上边就是视口第一行，在下边就是最后一行
-  private autoScrollTick(): void {
-    const { H } = this.layout;
-    const maxOff = Math.max(0, this.previewLines.length - H);
-    const next = Math.max(0, Math.min(maxOff, this.previewOffset + this.autoScrollDir));
-    if (!this.sel || !this.dragging || next === this.previewOffset) {
-      this.stopAutoScroll();
-      return;
-    }
-    this.previewOffset = next;
-    if (this.dragTo(this.dragX, this.autoScrollDir < 0 ? BODY_TOP - 1 : BODY_TOP + H)) this.selMoved = true;
-    this.invalidate();
-    this.requestRender?.();
-  }
-
-  private stopAutoScroll(): void {
-    if (this.autoScrollTimer) clearInterval(this.autoScrollTimer);
-    this.autoScrollTimer = undefined;
-    this.autoScrollDir = 0;
   }
 
   // 选区里的纯文本
@@ -500,11 +436,11 @@ export class PeekComponent implements Component, Focusable {
 
   // Ctrl+C：复制选区，清掉高亮，底部闪一下结果
   private copySelection(): void {
-    const sel = this.activeSel();
+    const sel = this.drag.active();
     if (!sel) return;
     const text = this.selectionToText(sel);
     const n = text.split("\n").length;
-    this.clearSelection();
+    this.drag.clear();
     this.invalidate();
     if (!text.trim() || !this.onCopy) return;
     void this.onCopy(text).then((ok) => this.showHint(ok ? msg("copied", { n }) : msg("copyFailed"), ok));
@@ -603,7 +539,7 @@ export class PeekComponent implements Component, Focusable {
     if (this.previewLines.length > H) info += ` (${this.previewOffset + 1}-${end}/${this.previewLines.length})`;
     const scrollInfo = info ? t.fg("dim", info) : "";
 
-    const sel = this.activeSel();
+    const sel = this.drag.active();
     for (let i = 0; i < H; i++) {
       let l = leftRows[i] ?? " ".repeat(lw);
       let r = rightRows[i] ?? "";

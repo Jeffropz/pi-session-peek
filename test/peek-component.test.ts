@@ -822,18 +822,18 @@ test("拖选：往上拖也行；单击不留选区；再按一下清掉选区�
   assert.deepEqual(c.handleMouse(MOUSE("press", x0 + 1, 3 + 1)), { handled: true, capture: true, render: true });
   c.handleMouse(MOUSE("release", x0 + 1, 3 + 1));
   assert.equal(hlRows(c).length, 0);
-  assert.equal(c.sel, undefined);
+  assert.equal(c.drag.sel, undefined);
 
   drag(c, x0 + 5, 3 + 5, x0 + 1, 3 + 2);
   c.handleInput(KEY.down);
   assert.equal(hlRows(c).length, 0);
   drag(c, x0 + 5, 3 + 5, x0 + 1, 3 + 2);
   type(c, "x");
-  assert.equal(c.sel, undefined);
+  assert.equal(c.drag.sel, undefined);
   c.handleInput(KEY.bs);
   drag(c, x0 + 5, 3 + 5, x0 + 1, 3 + 2);
   c.handleInput(KEY.ct);
-  assert.equal(c.sel, undefined);
+  assert.equal(c.drag.sel, undefined);
   // 预览滚动不清选区，高亮跟着内容走
   c.render(120); // 按键之后先画一帧，鼠标坐标才对得上当前的预览位置
   drag(c, x0 + 5, 3 + 5, x0 + 1, 3 + 2);
@@ -857,15 +857,15 @@ test("拖选：右栏拖出下边自动滚动，焦点跟到最后一行；松�
   assert.ok(top + H < c.previewLines.length - 5, "room to scroll");
   c.handleMouse(MOUSE("press", x0 + 2, 3 + 2));
   c.handleMouse({ ...MOUSE("press", x0 + 2, 3 + H + 1), type: "drag" }); // 拖到主体下面
-  assert.equal(c.autoScrollDir, 1);
+  assert.equal(c.drag.autoScrollDir, 1);
   await tick(130);
   assert.ok(c.previewOffset > top, "scrolled down");
-  assert.equal(c.sel.focus.row, c.previewOffset + H - 1, "focus follows the bottom row");
+  assert.equal(c.drag.sel.focus.row, c.previewOffset + H - 1, "focus follows the bottom row");
   c.handleMouse(MOUSE("release", x0 + 2, 3 + H + 1));
   const stopped = c.previewOffset;
   await tick(130);
   assert.equal(c.previewOffset, stopped, "stops on release");
-  assert.equal(c.autoScrollTimer, undefined);
+  assert.equal(c.drag.autoScrollTimer, undefined);
   c.dispose();
 });
 
