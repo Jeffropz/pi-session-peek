@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.2
 
 - Wheel over the list now scrolls the list like a scrollbar instead of moving the selection. The selection stays where it is and comes back into view on `↑` / `↓`, a click, a new filter or a delete.
 - Search: plain terms no longer match the working directory, only the conversation and the session name. With the current-directory scope every session shares the same path prefix, so a word from the path used to match all of them. Use `dir:` (or `cwd:`) to search paths.
