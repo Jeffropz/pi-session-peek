@@ -3,8 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
+import { sanitizeText } from "../src/ansi.ts";
 import { matchesSession, parseQuery } from "../src/query.ts";
-import { deleteSession, renameSession, sanitizeText, scanRoot, scanSessions, sessionsDir, toolSummary, trashCommands, type PeekSession } from "../src/sessions.ts";
+import { deleteSession, renameSession, scanRoot, scanSessions, sessionsDir, toolSummary, trashCommands, type PeekSession } from "../src/sessions.ts";
 
 let agentDir: string;
 let dir: string;

@@ -3,6 +3,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { sanitizeText } from "./ansi.ts";
 import { normPath } from "./text.ts";
 
 // 读 ~/.pi/agent/sessions 下的会话 JSONL，按 mtime 缓存；重命名和删除也在这里。
@@ -63,11 +64,6 @@ async function walkJsonl(dir: string, out: string[]): Promise<void> {
     else if (e.name.endsWith(".jsonl")) out.push(p);
   }
 }
-
-// 终端转义序列（CSI / OSC / DCS / APC 等）和除 \t \n 外的 C0 控制字符。正文里带这些会原样写到屏幕上：
-// 排版错乱、宽度算错，OSC 52 之类的还能改剪贴板 / 窗口标题
-const CONTROL_RE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|[\]P_^X][^\x07\x1b]*(?:\x07|\x1b\\)?|[@-Z\\-_])|[\x00-\x08\x0b-\x1f\x7f]/g;
-export const sanitizeText = (s: string) => s.replace(/\r\n?/g, "\n").replace(CONTROL_RE, "");
 
 function extractText(content: unknown): string {
   if (typeof content === "string") return sanitizeText(content);

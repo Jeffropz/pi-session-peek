@@ -1,4 +1,5 @@
 import { sliceByColumn, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+import { ANSI_TAIL_RE, isSgr, splitAnsi } from "./ansi.ts";
 
 // 鼠标拖出来的选区。只在一个栏里：行号是这一栏内容的绝对行号（左栏每个会话两行，右栏是预览行），
 // 列号是栏内列号。起止格都算在内，中间的行整行选中，所以从左栏拖到右栏也只会选左栏的字
@@ -16,9 +17,6 @@ export interface Selection {
   focus: Cell; // 现在拖到的格
 }
 
-// CSI / OSC / APC 序列，反显时要原样保留
-const SEQ = /\x1b\[[0-9;?<>=!]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b_[^\x07\x1b]*(?:\x07|\x1b\\)/g;
-const TAIL = new RegExp(`(?:${SEQ.source})+$`); // 行尾的样式收尾码
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /** 起止格，按阅读顺序 */
@@ -60,16 +58,14 @@ export function rowColumns(sel: Selection, row: number, line: string, width: num
   return c1 > c0 ? [c0, c1] : undefined;
 }
 
-// 整段反显。段里原有的样式码照留，每个样式码后面补一次反显，免得被 0m 之类的重置掉
+// 整段反显。段里原有的序列照留（反显时要原样保留），每个样式码后面补一次反显，免得被 0m 之类的重置掉
 function inverse(text: string): string {
   let out = "\x1b[7m";
-  let last = 0;
-  for (const m of text.matchAll(SEQ)) {
-    out += text.slice(last, m.index) + m[0];
-    if (m[0].startsWith("\x1b[") && m[0].endsWith("m")) out += "\x1b[7m";
-    last = m.index + m[0].length;
+  for (const seg of splitAnsi(text)) {
+    out += seg.text;
+    if (seg.esc && isSgr(seg.text)) out += "\x1b[7m";
   }
-  return out + text.slice(last) + "\x1b[27m";
+  return out + "\x1b[27m";
 }
 
 /** 给一行的 [c0, c1) 列加反显，其余部分原样 */
@@ -79,7 +75,7 @@ export function highlightColumns(line: string, c0: number, c1: number): string {
   const mid = sliceByColumn(line, c0, c1 - c0, true);
   const after = sliceByColumn(line, c1, Math.max(0, w - c1), true);
   // sliceByColumn 切到行尾时会丢掉最后那些收尾码（39m、49m 之类），补回去，否则背景色会漏到右边
-  const tail = TAIL.exec(line)?.[0] ?? "";
+  const tail = ANSI_TAIL_RE.exec(line)?.[0] ?? "";
   return before + inverse(mid) + after + tail;
 }
 

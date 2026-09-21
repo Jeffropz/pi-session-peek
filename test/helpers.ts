@@ -1,4 +1,5 @@
 import { setCapabilityOverrides, type MarkdownTheme } from "@earendil-works/pi-tui";
+import { ANSI_SEQ_RE } from "../src/ansi.ts";
 
 // pi-tui 只在识别出支持 OSC 8 的终端（WT_SESSION、TERM_PROGRAM 等）时才输出超链接，
 // CI 的 runner 没有这些变量，会把链接退化成 "text (url)"。测试里固定打开，结果不随运行环境变
@@ -14,5 +15,5 @@ export const mdTheme: MarkdownTheme = {
   hr: id, listBullet: id, bold: id, italic: id, strikethrough: id, underline: id,
 };
 
-// 去掉颜色（CSI）和超链接（OSC）序列
-export const strip = (l: string) => l.replace(/\x1b\[[0-9;]*m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+// 去掉转义序列（颜色、超链接等），和生产代码分词用的是同一个正则
+export const strip = (l: string) => l.replace(ANSI_SEQ_RE, "");

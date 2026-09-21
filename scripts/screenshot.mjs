@@ -122,7 +122,8 @@ comp.handleInput("\t"); // all projects, so the list is fuller
 const lines = comp.render(COLS);
 
 // ANSI -> HTML. Every character gets a fixed terminal-cell width (emoji take two cells), so the
-// column separators line up.
+// column separators line up. This is its own SGR -> CSS state machine (it needs italic and background
+// colours too), so it is deliberately not shared with applySgr in src/ansi.ts.
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 function toHtml(line) {
   let fg = "", bg = "", bold = false, underline = false, dim = false, italic = false;

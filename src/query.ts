@@ -1,3 +1,4 @@
+import { applySgr, ANSI_SEQ_RE, splitAnsi, type SgrStyle } from "./ansi.ts";
 import { msg, type MsgKey } from "./i18n.ts";
 import type { PeekMsg, PeekSession } from "./sessions.ts";
 import { stylePrefix, type PeekTheme } from "./theme.ts";
@@ -166,45 +167,9 @@ function nextMatch(text: string, terms: Term[], from: number): [number, number] 
   return [best, len];
 }
 
-// pi-tui 会产生的三类转义序列：CSI（颜色等）、OSC（超链接）、APC
-const ESC_RE = /\x1b\[[0-9;?]*[A-Za-z]|\x1b[\]_][^\x07\x1b]*(?:\x07|\x1b\\)/g;
-
-// 只跟踪高亮会碰到的几项：前景色、粗体 / 暗淡、下划线
-interface Sgr {
-  fg: string;
-  bold: boolean;
-  dim: boolean;
-  underline: boolean;
-}
-
-function applySgr(st: Sgr, seq: string): void {
-  const m = /^\x1b\[([0-9;]*)m$/.exec(seq);
-  if (!m) return;
-  const p = m[1] === "" ? [0] : m[1].split(";").map(Number);
-  for (let i = 0; i < p.length; i++) {
-    const c = p[i];
-    if (c === 0) {
-      st.fg = "";
-      st.bold = st.dim = st.underline = false;
-    } else if (c === 1) st.bold = true;
-    else if (c === 2) st.dim = true;
-    else if (c === 22) st.bold = st.dim = false;
-    else if (c === 4) st.underline = true;
-    else if (c === 24) st.underline = false;
-    else if ((c >= 30 && c <= 37) || (c >= 90 && c <= 97)) st.fg = `\x1b[${c}m`;
-    else if (c === 39) st.fg = "";
-    else if (c === 38 || c === 48) {
-      // 扩展色 38;5;n / 38;2;r;g;b；背景色（48）只需要跳过它的参数
-      const n = p[i + 1] === 5 ? 2 : p[i + 1] === 2 ? 4 : 0;
-      if (c === 38 && n) st.fg = `\x1b[${p.slice(i, i + n + 1).join(";")}m`;
-      i += n;
-    }
-  }
-}
-
-// 渲染后的一行（可带 ANSI）里有没有命中，预览按行记命中用
+// 渲染后的一行（可带 ANSI）里有没有命中，预览按行记命中用。和 highlight 用同一个正则去掉序列，两边才对得上
 export function lineHasMatch(line: string, terms: Term[]): boolean {
-  return terms.length > 0 && anyMatch(line.replace(ESC_RE, ""), terms);
+  return terms.length > 0 && anyMatch(line.replace(ANSI_SEQ_RE, ""), terms);
 }
 
 // 在一行文字里高亮命中，返回带 ANSI 的字符串。
@@ -215,14 +180,7 @@ export function highlight(line: string, terms: Term[], theme: PeekTheme): string
   if (!terms.length || !line) return line;
 
   // 拆成可见文本和转义序列两类片段
-  const segs: { text: string; esc: boolean }[] = [];
-  let last = 0;
-  for (const m of line.matchAll(ESC_RE)) {
-    if (m.index > last) segs.push({ text: line.slice(last, m.index), esc: false });
-    segs.push({ text: m[0], esc: true });
-    last = m.index + m[0].length;
-  }
-  if (last < line.length) segs.push({ text: line.slice(last), esc: false });
+  const segs = splitAnsi(line);
 
   let visible = "";
   for (const s of segs) if (!s.esc) visible += s.text;
@@ -237,7 +195,7 @@ export function highlight(line: string, terms: Term[], theme: PeekTheme): string
   if (!ranges.length) return line;
 
   const on = "\x1b[1m\x1b[4m" + stylePrefix((s) => theme.fg("warning", s));
-  const st: Sgr = { fg: "", bold: false, dim: false, underline: false };
+  const st: SgrStyle = { fg: "", bold: false, dim: false, underline: false };
   const off = () =>
     (st.underline ? "" : "\x1b[24m") +
     (st.bold ? "" : "\x1b[22m" + (st.dim ? "\x1b[2m" : "")) +
