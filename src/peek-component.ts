@@ -12,16 +12,17 @@ import {
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import { msg } from "./i18n.ts";
-import { anyMatch, highlight, lineHasMatch, matchesSession, parseQuery, roleTerms, snippet, type ParsedQuery, type RoleTerms } from "./query.ts";
+import { BODY_TOP, bodyRows, paneWidths, SEP } from "./layout.ts";
+import { buildList, followSelection, listRows, visibleItems } from "./list.ts";
+import { anyMatch, highlight, lineHasMatch, matchesSession, parseQuery, roleTerms, type ParsedQuery, type RoleTerms } from "./query.ts";
 import { bounds, highlightColumns, rowColumns, selectionText, type Cell, type Pane, type Selection } from "./selection.ts";
 import type { PeekMsg, PeekSession } from "./sessions.ts";
 import { fmtTime, normPath, padEndVisible } from "./text.ts";
 import type { PeekTheme } from "./theme.ts";
 
-// 双栏选择器。文件操作（删除 / 重命名 / 分叉）不在这里做，由 index.ts 通过回调注入
+// 双栏选择器。文件操作（删除 / 重命名 / 分叉）不在这里做，由 index.ts 通过回调注入。
+// 几何常量在 layout.ts，左栏在 list.ts
 
-const BODY_TOP = 3; // 头部、搜索框、分隔线之后才是双栏主体
-const SEP = 3; // 两栏之间 " │ " 占的列数
 const WHEEL_LINES = 3; // 滚轮每格滚几行预览，和 Shift+↑↓ 一样
 const AUTO_SCROLL_MS = 50; // 拖选拖出预览上下边时自动滚动的节奏，和 pi-tui 一样
 const HINT_MS = 1500; // 底部"已复制"提示停留时间
@@ -151,8 +152,7 @@ export class PeekComponent implements Component, Focusable {
   }
 
   private bodyHeight(): number {
-    const rows = process.stdout.rows || this.termRows || 24; // 每次都读，终端拉伸后布局跟着变
-    return Math.max(8, Math.min(rows - 12, 30));
+    return bodyRows(this.termRows);
   }
 
   handleInput(data: string): void {
@@ -488,7 +488,7 @@ export class PeekComponent implements Component, Focusable {
     const { rt, hasBody } = this.listTerms();
     return selectionText(sel, lw, (row) => {
       const s = this.filtered[row >> 1];
-      return s && this.listRows(s, (row >> 1) === this.selected, lw, rt, hasBody)[row & 1];
+      return s && listRows(s, (row >> 1) === this.selected, lw, rt, hasBody, this.theme)[row & 1];
     });
   }
 
@@ -541,52 +541,6 @@ export class PeekComponent implements Component, Focusable {
   private listTerms(): { rt: RoleTerms; hasBody: boolean } {
     const rt = roleTerms(this.query().terms);
     return { rt, hasBody: rt.user.length > 0 || rt.assistant.length > 0 };
-  }
-
-  // 左栏一个会话的两行：时间 + 目录（有正文关键词时加命中数），首条消息或命中片段
-  private listRows(s: PeekSession, sel: boolean, lw: number, rt: RoleTerms, hasBody: boolean): [string, string] {
-    const t = this.theme;
-    const time = fmtTime(s.time);
-    const cwdTail = s.cwd.replace(/\\/g, "/").split("/").slice(-2).join("/");
-    const hitBadge = hasBody
-      ? ` ·${s.msgs.reduce((n, m) => n + (anyMatch(m.text, rt[m.role]) ? 1 : 0), 0)}`
-      : "";
-    const l1 = `${sel ? "›" : " "} ${time} ${cwdTail}${hitBadge}`;
-    const snip = hasBody ? snippet(s.msgs, rt, lw) : undefined;
-    const l2 = snip !== undefined
-      ? `  ${highlight(snip.text, rt[snip.role], t)}`
-      : `  ${s.first}${s.name ? `  [${s.name}]` : ""}`;
-    if (sel) {
-      return [
-        t.bg("selectedBg", padEndVisible(t.fg("accent", truncateToWidth(l1, lw)), lw)),
-        t.bg("selectedBg", padEndVisible(truncateToWidth(l2, lw), lw)),
-      ];
-    }
-    return [padEndVisible(l1, lw), padEndVisible(t.fg("dim", truncateToWidth(l2, lw)), lw)];
-  }
-
-  // 左栏，每个会话两行
-  private buildList(height: number, lw: number): string[] {
-    const { rt, hasBody } = this.listTerms();
-    const visible = Math.max(1, Math.floor(height / 2));
-    if (this.selected < this.listOffset) this.listOffset = this.selected;
-    if (this.selected >= this.listOffset + visible) {
-      this.listOffset = this.selected - visible + 1;
-    }
-
-    const rows: string[] = [];
-    for (let i = 0; i < visible; i++) {
-      const idx = this.listOffset + i;
-      const s = this.filtered[idx];
-      if (!s) {
-        rows.push(" ".repeat(lw), " ".repeat(lw));
-        continue;
-      }
-      rows.push(...this.listRows(s, idx === this.selected, lw, rt, hasBody));
-    }
-    // 每项两行，height 是奇数时会少一行，补空行，否则最后一行右栏会顶到左边
-    while (rows.length < height) rows.push(" ".repeat(lw));
-    return rows.slice(0, height);
   }
 
   // 用 pi 自己的 Markdown 组件渲染一条消息，和主界面里的对话长得一样；参数照抄 pi 的
@@ -716,8 +670,7 @@ export class PeekComponent implements Component, Focusable {
       return this.cachedLines;
     }
     const t = this.theme;
-    const lw = Math.max(26, Math.min(56, Math.floor(width * 0.4)));
-    const rw = Math.max(20, width - lw - 3);
+    const { lw, rw } = paneWidths(width);
     this.layout = { lw, rw, H };
 
     const out: string[] = [];
@@ -740,7 +693,9 @@ export class PeekComponent implements Component, Focusable {
 
     // 双栏
     this.buildPreview(rw);
-    const leftRows = this.buildList(H, lw);
+    const { rt, hasBody } = this.listTerms();
+    this.listOffset = followSelection(this.selected, this.listOffset, visibleItems(H));
+    const leftRows = buildList(this.filtered, this.selected, this.listOffset, H, lw, rt, hasBody, t);
 
     const maxOff = Math.max(0, this.previewLines.length - H);
     if (this.previewOffset > maxOff) this.previewOffset = maxOff;
