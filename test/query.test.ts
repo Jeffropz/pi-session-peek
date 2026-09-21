@@ -26,11 +26,12 @@ function sess(texts: string[], name = "", cwd = "D:/proj"): PeekSession {
   };
 }
 
-test("matchesSession: 不区分大小写，每个词都要命中，名字和 cwd 也算", () => {
+test("matchesSession: 不区分大小写，每个词都要命中，名字也算，工作目录不算（要用 dir:）", () => {
   const s = sess(["Hello World", "second Reply"], "My Name");
   assert.ok(matchesSession(s, terms("hello reply"))); // 分散在两条消息里也行
   assert.ok(matchesSession(s, terms('"my name"')));
-  assert.ok(matchesSession(s, terms("d:/proj")));
+  assert.ok(!matchesSession(s, terms("d:/proj"))); // 路径里的词不算：当前目录树下所有会话都带同一段前缀
+  assert.ok(matchesSession(s, terms("dir:proj")));
   assert.ok(!matchesSession(s, terms("hello missing")));
   assert.ok(!matchesSession(sess([]), terms("x")));
 });
@@ -107,9 +108,10 @@ test("排除：-foo 命中的会话不显示；-- 开头和单个 - 是普通词
   const b = sess(["alpha and beta"]);
   assert.ok(matchesSession(a, terms("alpha -beta")));
   assert.ok(!matchesSession(b, terms("alpha -beta")));
-  // 排除词也看名字和目录
+  // 排除词也看名字；目录和普通词一样不看，要排除路径用 -dir:
   assert.ok(!matchesSession(sess(["x"], "beta"), terms("-beta")));
-  assert.ok(!matchesSession(sess(["x"], "", "D:/beta"), terms("-beta")));
+  assert.ok(matchesSession(sess(["x"], "", "D:/beta"), terms("-beta")));
+  assert.ok(!matchesSession(sess(["x"], "", "D:/beta"), terms("-dir:beta")));
   // 只有排除词时，没命中的会话全部保留
   assert.ok(matchesSession(a, terms("-beta")));
   assert.deepEqual(shape("--foo -"), ["--foo", "-"]);

@@ -12,7 +12,7 @@ Search your [pi](https://pi.dev) session history by what was actually said, read
 
 - Opens a two-pane picker with `/peek` or `/peek <keyword>`: sessions on the left, the full conversation on the right.
 - Renders the conversation with pi's own Markdown renderer, so headings, code blocks with syntax highlighting, tables and lists look the same as in the main transcript.
-- Filters as you type across conversation text, session name and working directory. Tool call arguments and results are excluded from the search, so a keyword only matches sessions that actually discussed it.
+- Filters as you type across conversation text and session name. The working directory is searched only with an explicit `dir:`, so a word from a project path does not match every session in that project. Tool call arguments and results are excluded from the search, so a keyword only matches sessions that actually discussed it.
 - Requires every space-separated keyword to match, and shows a snippet around the first hit in the list.
 - Understands `"exact phrases"`, `either|or`, `-exclude`, `name:` / `dir:` / `user:` / `ai:` prefixes and `/regex/`.
 - Limits results to recently active sessions with `@7d`, `@24h`, `@2w` or `@1m`.
@@ -98,7 +98,7 @@ The filter is case-insensitive and matches anywhere in the text. Whitespace sepa
 | `token undefined` | Sessions containing both `token` and `undefined`, in any order and any message |
 | `"token undefined"` | The exact phrase. Whitespace inside the quotes matches any run of whitespace, including a line break. |
 | `vue\|react` | Sessions containing `vue` or `react` |
-| `-draft` | Sessions that do not contain `draft` anywhere (messages, name or directory) |
+| `-draft` | Sessions that do not contain `draft` in any message or in the session name |
 | `name:auth` | Session name only. `dir:` or `cwd:` for the working directory. |
 | `user:deploy` | Only the messages you wrote. `ai:` or `assistant:` for the replies. |
 | `/\bfoo\d+\b/` | JavaScript regular expression, case-insensitive, `^` and `$` match line boundaries. Use `\s` instead of a space. |
@@ -107,7 +107,7 @@ The filter is case-insensitive and matches anywhere in the text. Whitespace sepa
 
 Quotes are the escape hatch: `"-foo"`, `"a|b"`, `"name:x"` and `"/x/"` search for those characters literally. A regex that fails to compile is searched as plain text. Only positive terms are highlighted in the preview, and `name:` / `dir:` terms never touch the conversation, so `name:auth` alone shows the full conversation with no highlights.
 
-The search index holds user and assistant messages, the session name and the working directory. It does not hold tool call arguments or tool results, and the tool lines shown by `Ctrl+T` are never matched or highlighted.
+The search index holds user and assistant messages and the session name. The working directory is matched only by `dir:` / `cwd:` terms: with the current-directory scope every session shares the same path prefix, so a plain word from the path would match all of them. The index does not hold tool call arguments or tool results, and the tool lines shown by `Ctrl+T` are never matched or highlighted.
 
 ## 🌐 Language
 

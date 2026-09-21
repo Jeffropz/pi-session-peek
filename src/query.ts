@@ -4,7 +4,7 @@ import type { PeekMsg, PeekSession } from "./sessions.ts";
 import { stylePrefix, type PeekTheme } from "./theme.ts";
 
 // 搜索框语法。空白分隔多个词，全部满足才算（AND）。每个词可以是：
-//   foo            子串，大小写不敏感
+//   foo            子串，大小写不敏感，在对话正文和会话名里找；不看工作目录（见 termHits）
 //   "foo bar"      短语，引号里的一段空白匹配正文里任意一段空白（含换行）
 //   a|b            任一命中（OR）；要搜字面的 | 就加引号
 //   /re/           正则（JS 语法，自动带 i 和 m 标志，不能含空白，用 \s 代替）；写错了按普通文字搜
@@ -126,11 +126,13 @@ function termHits(s: PeekSession, t: Term): boolean {
     case "assistant":
       return s.msgs.some((m) => m.role === t.field && hit(t.re, m.text));
     default:
-      return hit(t.re, s.name) || hit(t.re, s.cwd) || s.msgs.some((m) => hit(t.re, m.text));
+      // 普通词不看工作目录：当前目录树范围下所有会话的路径都带同一段前缀，路径里的词会命中全部会话。
+      // 要搜路径用 dir:。pi 自带的选择器会把 cwd 拼进搜索文本，这里是有意不同
+      return hit(t.re, s.name) || s.msgs.some((m) => hit(t.re, m.text));
   }
 }
 
-// 每个词都要满足：普通词在会话名、cwd 或某条消息里出现，排除词则哪里都不出现；带前缀的只看对应的地方。
+// 每个词都要满足：普通词在会话名或某条消息里出现，排除词则哪里都不出现；带前缀的只看对应的地方。
 // 正文不预存小写副本，直接在原文上用不区分大小写的正则匹配
 export function matchesSession(s: PeekSession, terms: Term[]): boolean {
   return terms.every((t) => termHits(s, t) !== t.negate);

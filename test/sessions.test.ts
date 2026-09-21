@@ -84,7 +84,8 @@ test("scanSessions: 解析 header、消息、名字，工具输入输出不进�
   assert.ok(!("searchText" in sa)); // 不再额外存一份小写全文
   assert.ok(hits(sa, "FIRST   question"));
   assert.ok(hits(sa, "my name"));
-  assert.ok(hits(sa, "d:\\proj"));
+  assert.ok(!hits(sa, "d:\\proj")); // 工作目录不参与普通匹配
+  assert.ok(matchesSession(sa, parseQuery("dir:proj").terms));
   assert.ok(!hits(sa, "secret_tool_arg"));
   assert.ok(!hits(sa, "secret_tool_output"));
 });
