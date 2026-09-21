@@ -34,6 +34,7 @@ const mk = (cwd, ago, texts, name = "") => ({
   first: texts[0].replace(/\s+/g, " ").slice(0, 80),
   msgs: texts.map((text, i) => ({ role: i % 2 ? "assistant" : "user", text })),
   mtime: Date.now() - ago * day,
+  size: 0,
 });
 
 const sessions = [

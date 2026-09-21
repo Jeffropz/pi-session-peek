@@ -22,6 +22,7 @@ function mk(cwd: string, texts: string[], ageDays: number, name = ""): PeekSessi
     first: texts[0],
     msgs: texts.map((text, i) => ({ role: i % 2 ? "assistant" : "user", text })),
     mtime,
+    size: 0,
   };
 }
 
@@ -178,6 +179,54 @@ test("删除失败时列表不变", async () => {
   c.handleInput("y");
   await tick();
   assert.equal(c.filtered.length, 2);
+});
+
+test("删除在途时不能再删、改名、进入、分叉；回来后恢复", async () => {
+  const c = make();
+  let resolve!: (ok: boolean) => void;
+  let calls = 0;
+  c.onDelete = () => (calls++, new Promise<boolean>((r) => (resolve = r)));
+  const opened: string[] = [];
+  c.onResume = () => opened.push("resume");
+  c.onFork = () => opened.push("fork");
+  c.onRename = async () => true;
+  c.handleInput(KEY.cd);
+  c.handleInput("y");
+  assert.equal(calls, 1);
+  // 回调没回来之前
+  c.handleInput(KEY.cd);
+  assert.equal(c.confirmingDelete, false);
+  c.handleInput(KEY.cr);
+  assert.equal(c.renaming, false);
+  c.handleInput(KEY.enter);
+  c.handleInput(KEY.co);
+  c.render(120);
+  c.handleMouse({ type: "press", button: "left", x: 2, y: 3 });
+  c.handleMouse({ type: "click", button: "left", x: 2, y: 3, clickCount: 2 });
+  assert.deepEqual(opened, []);
+  resolve(true);
+  await tick();
+  assert.equal(c.filtered.length, 1);
+  c.handleInput(KEY.enter);
+  assert.deepEqual(opened, ["resume"]);
+});
+
+test("删除 / 重命名回调抛错也会解锁，不会永久锁住", async () => {
+  const c = make();
+  c.onDelete = async () => { throw new Error("boom"); };
+  c.onRename = async () => { throw new Error("boom"); };
+  c.handleInput(KEY.cd);
+  c.handleInput("y");
+  assert.equal(c.busy, true);
+  await tick();
+  assert.equal(c.busy, false);
+  assert.equal(c.filtered.length, 2, "nothing removed on error");
+  c.handleInput(KEY.cr);
+  c.renameInput.setValue("x");
+  c.handleInput(KEY.enter);
+  assert.equal(c.busy, true);
+  await tick();
+  assert.equal(c.busy, false);
 });
 
 test("Ctrl+R 重命名：Enter 提交，名字参与搜索", async () => {

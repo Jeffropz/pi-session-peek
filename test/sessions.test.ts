@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { matchesSession, parseQuery } from "../src/query.ts";
-import { deleteSession, renameSession, scanSessions, toolSummary, trashCommands, type PeekSession } from "../src/sessions.ts";
+import { deleteSession, renameSession, sanitizeText, scanRoot, scanSessions, sessionsDir, toolSummary, trashCommands, type PeekSession } from "../src/sessions.ts";
 
 let agentDir: string;
 let dir: string;
@@ -182,4 +182,75 @@ test("toolSummary: 常见主参数优先，其次第一个字符串参数，压�
   assert.equal(toolSummary(undefined), "");
   assert.equal(toolSummary("x"), "");
   assert.equal(toolSummary({ command: "x".repeat(200) }).length, 120);
+});
+
+test("sessionsDir: 默认 ~/.pi/agent/sessions，认 PI_CODING_AGENT_DIR 并展开 ~", () => {
+  const home = homedir();
+  assert.equal(sessionsDir({}), join(home, ".pi", "agent", "sessions"));
+  assert.equal(sessionsDir({ PI_CODING_AGENT_DIR: "/x/agent" }), join("/x/agent", "sessions"));
+  assert.equal(sessionsDir({ PI_CODING_AGENT_DIR: "~/a" }), join(home, "/a", "sessions"));
+});
+
+test("scanRoot: pi 的会话目录是默认布局的子目录时扫上一级（所有项目），自定义目录时扫它本身", () => {
+  const env = { PI_CODING_AGENT_DIR: "/x/agent" };
+  const root = join("/x/agent", "sessions");
+  assert.equal(scanRoot(undefined, env), root);
+  assert.equal(scanRoot(join(root, "--D--proj--"), env), root);
+  assert.equal(scanRoot(join(root, "--D--proj--") + "/", env), root);
+  assert.equal(scanRoot("/custom/sessions", env), "/custom/sessions");
+  assert.equal(scanRoot(join(root, "nested", "--D--proj--"), env), join(root, "nested", "--D--proj--"));
+});
+
+test("sanitizeText: 去掉终端转义序列和控制字符，保留换行和制表符，CRLF 归一", () => {
+  assert.equal(sanitizeText("a\x1b[31mred\x1b[0m b"), "ared b");
+  assert.equal(sanitizeText("x\x1b]8;;http://u\x07link\x1b]8;;\x07y"), "xlinky");
+  assert.equal(sanitizeText("x\x1b]52;c;aGk=\x1b\\y"), "xy"); // ST（ESC \）终止的 OSC
+  assert.equal(sanitizeText("x\x1bPq\x1b\\y\x1b_z\x07w"), "xyw"); // DCS 用 ST，APC 用 BEL
+  assert.equal(sanitizeText("a\x1b\\b"), "ab"); // 孤立的 ST 本身也去掉
+  assert.equal(sanitizeText("a\x07b\x00c\x7fd"), "abcd");
+  assert.equal(sanitizeText("l1\r\nl2\rl3\tt"), "l1\nl2\nl3\tt");
+  assert.equal(sanitizeText("plain 中文 ✓"), "plain 中文 ✓");
+});
+
+test("scanSessions: 正文和会话名里的转义序列被清掉，字符串型 content 也能解析", async () => {
+  const p = join(dir, "esc.jsonl");
+  writeFileSync(
+    p,
+    line({ type: "session", version: 3, id: "esc", timestamp: "2026-09-08T00:00:00.000Z", cwd: "D:\proj" }) +
+      line({ type: "message", id: "e1", parentId: null, timestamp: "t", message: { role: "user", content: "plain \x1b[2Jstring" } }) +
+      line({ type: "message", id: "e2", parentId: "e1", timestamp: "t", message: { role: "assistant", content: [{ type: "text", text: "\x1b[31mred\x1b[0m" }, { type: "toolCall", name: "bash", arguments: { command: "echo \x1b]0;t\x07hi" } }] } }) +
+      line({ type: "session_info", id: "e3", parentId: "e2", timestamp: "t", name: "n\x1b[1mame\n2" }),
+  );
+  const s = (await scanSessions()).find((s) => s.path === p)!;
+  assert.deepEqual(s.msgs, [
+    { role: "user", text: "plain string" },
+    { role: "assistant", text: "red", tools: [{ name: "bash", summary: "echo hi" }] },
+  ]);
+  assert.equal(s.name, "name\n2");
+});
+
+test("scanSessions: mtime 相同但大小变了也重新解析", async () => {
+  const p = session("sz", { cwd: "D:\proj", time: "2026-09-09T00:00:00.000Z", msgs: [["user", "one"]] });
+  const t = new Date("2026-09-09T00:00:00Z");
+  utimesSync(p, t, t);
+  const first = (await scanSessions()).find((s) => s.path === p)!;
+  writeFileSync(p, readFileSync(p, "utf8") + line({ type: "message", id: "sz-9", parentId: "sz-0", timestamp: "x", message: { role: "assistant", content: [{ type: "text", text: "two" }] } }));
+  utimesSync(p, t, t);
+  const again = (await scanSessions()).find((s) => s.path === p)!;
+  assert.notEqual(again, first);
+  assert.equal(again.msgs.length, 2);
+});
+
+test("renameSession: 名字里的换行和转义序列被清掉", async () => {
+  const p = session("rn", { cwd: "D:\proj", time: "2026-09-10T00:00:00.000Z", msgs: [["user", "hi"]] });
+  renameSession(p, "  a\r\nb\x1b[31m c  ");
+  const lines = readFileSync(p, "utf8").split("\n").filter(Boolean);
+  assert.equal(lines.length, 3, "still one record per line");
+  assert.equal(JSON.parse(lines.at(-1)!).name, "a b c");
+});
+
+test("deleteSession: 回收站命令超时抛错但文件已经没了，算进回收站而不是永久删除", async () => {
+  const p = session("to", { cwd: "D:\proj", time: "2026-09-11T00:00:00.000Z", msgs: [["user", "bye"]] });
+  const r = await deleteSession(p, async () => { rmSync(p); throw new Error("timeout"); }, "win32");
+  assert.equal(r, "trash");
 });

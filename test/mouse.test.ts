@@ -312,7 +312,7 @@ function fakeTerminal(columns = 100, rows = 40) {
 
 function session(cwd: string, text: string): PeekSession {
   const mtime = Date.now();
-  return { path: `${cwd}/${text}.jsonl`, cwd, time: new Date(mtime).toISOString(), name: "", first: text, msgs: [{ role: "user", text }], mtime };
+  return { path: `${cwd}/${text}.jsonl`, cwd, time: new Date(mtime).toISOString(), name: "", first: text, msgs: [{ role: "user", text }], mtime, size: 0 };
 }
 
 test("接在真的 TuiMainScreen 上：重画后问光标，回复不进组件，鼠标按坐标选中，键盘照常过滤", async () => {

@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { msg } from "./src/i18n.ts";
 import { attachMouse } from "./src/mouse.ts";
 import { PeekComponent } from "./src/peek-component.ts";
-import { deleteSession, renameSession, scanSessions, type PeekSession } from "./src/sessions.ts";
+import { deleteSession, renameSession, scanRoot, scanSessions, sessionsDir, type PeekSession } from "./src/sessions.ts";
 
 // 这里只做注册：/peek 命令、--peek / --rp 启动参数，以及把删除 / 重命名 / 分叉注入给组件
 
@@ -55,7 +55,10 @@ export default function (pi: ExtensionAPI) {
 
       // 当前正在用的会话不列出来
       const currentFile = ctx.sessionManager.getSessionFile();
-      const all = (await scanSessions()).filter((s) => s.path !== currentFile);
+      // 扫描范围跟着 pi 实际在用的会话目录走（--session-dir / 环境变量 / settings.json 都在里面）
+      const root = scanRoot(ctx.sessionManager.getSessionDir());
+      const customDir = root !== sessionsDir() ? root : undefined;
+      const all = (await scanSessions(root)).filter((s) => s.path !== currentFile);
       if (!all.length) {
         ctx.ui.notify(msg("noSessions"), "info");
         return;
@@ -118,7 +121,8 @@ export default function (pi: ExtensionAPI) {
       if (picked.action === "fork") {
         // 和 pi --fork 一样：把全部记录复制到新文件，header 里记下 parentSession
         try {
-          const forked = SessionManager.forkFrom(picked.s.path, ctx.cwd);
+          // 自定义了会话目录时分叉也放进去，别写回默认目录
+          const forked = SessionManager.forkFrom(picked.s.path, ctx.cwd, customDir);
           target = forked.getSessionFile() ?? target;
           ctx.ui.notify(msg("forked", { file: basename(target) }), "info");
         } catch (e) {

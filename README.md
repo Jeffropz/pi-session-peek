@@ -128,7 +128,7 @@ On Windows PowerShell: `$env:PI_SESSION_PEEK_LANG = "en"` before starting pi. Th
 - The mouse needs a terminal that supports SGR mouse reporting and the cursor position report (`CSI 6 n`). Windows Terminal, iTerm2, kitty, WezTerm, Alacritty, GNOME Terminal and VS Code all do; the legacy Windows console does not.
 - The preview shows the last 500 messages of very long sessions. Hits in earlier messages are still counted and announced.
 - `pi --peek` without a value is rejected by pi at startup. Use `pi --rp` to open without a keyword.
-- Only sessions under `~/.pi/agent/sessions` (or `$PI_CODING_AGENT_DIR/sessions`) are scanned.
+- With the default layout every project under `~/.pi/agent/sessions` (or `$PI_CODING_AGENT_DIR/sessions`) is scanned. If pi runs with a custom session directory (`--session-dir`, `$PI_CODING_AGENT_SESSION_DIR` or `sessionDir` in settings), only that directory is scanned and forks are written there.
 
 ## 🗂️ Package layout
 

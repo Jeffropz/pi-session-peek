@@ -2,7 +2,8 @@ import { appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { normPath } from "./text.ts";
 
 // 读 ~/.pi/agent/sessions 下的会话 JSONL，按 mtime 缓存；重命名和删除也在这里。
 // 搜索不预存小写全文：会话正文只在 msgs 里放一份，匹配时用不区分大小写的正则直接扫（见 query.ts 的 matchesSession）
@@ -26,16 +27,27 @@ export interface PeekSession {
   first: string; // 首条消息，列表里显示用
   msgs: PeekMsg[];
   mtime: number;
+  size: number; // 和 mtime 一起当缓存键：mtime 粒度粗的文件系统上连续两次写入可能同一个 mtime
 }
 
 const sessionCache = new Map<string, PeekSession>();
 const READ_CONCURRENCY = 16; // 同时读的文件数，太高会把 libuv 线程池排满
 
-// 和 pi 一样认 PI_CODING_AGENT_DIR
-function sessionsDir(): string {
-  const env = process.env.PI_CODING_AGENT_DIR;
-  const agent = env ? (env.startsWith("~") ? join(homedir(), env.slice(1)) : env) : join(homedir(), ".pi", "agent");
+const expandTilde = (p: string) => (p.startsWith("~") ? join(homedir(), p.slice(1)) : p);
+
+// 默认布局下所有项目的会话根目录：和 pi 一样认 PI_CODING_AGENT_DIR，下面每个 cwd 一个子目录
+export function sessionsDir(env: NodeJS.ProcessEnv = process.env): string {
+  const agent = env.PI_CODING_AGENT_DIR ? expandTilde(env.PI_CODING_AGENT_DIR) : join(homedir(), ".pi", "agent");
   return join(agent, "sessions");
+}
+
+/** 要扫描的根目录。pi 的 getSessionDir() 是参数、环境变量、settings.json 合并后的结果：
+ * 默认布局时它是 <root>/sessions/<按 cwd 编码的子目录>，取上一级才能看到所有项目；
+ * 用户自定义了目录（--session-dir 等）时就是那个目录本身，直接扫它 */
+export function scanRoot(currentSessionDir: string | undefined, env: NodeJS.ProcessEnv = process.env): string {
+  const root = sessionsDir(env);
+  if (!currentSessionDir) return root;
+  return normPath(dirname(currentSessionDir)) === normPath(root) ? root : currentSessionDir;
 }
 
 async function walkJsonl(dir: string, out: string[]): Promise<void> {
@@ -52,13 +64,20 @@ async function walkJsonl(dir: string, out: string[]): Promise<void> {
   }
 }
 
+// 终端转义序列（CSI / OSC / DCS / APC 等）和除 \t \n 外的 C0 控制字符。正文里带这些会原样写到屏幕上：
+// 排版错乱、宽度算错，OSC 52 之类的还能改剪贴板 / 窗口标题
+const CONTROL_RE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|[\]P_^X][^\x07\x1b]*(?:\x07|\x1b\\)?|[@-Z\\-_])|[\x00-\x08\x0b-\x1f\x7f]/g;
+export const sanitizeText = (s: string) => s.replace(/\r\n?/g, "\n").replace(CONTROL_RE, "");
+
 function extractText(content: unknown): string {
-  if (typeof content === "string") return content;
+  if (typeof content === "string") return sanitizeText(content);
   if (!Array.isArray(content)) return "";
-  return content
-    .filter((c: any) => c?.type === "text" && typeof c.text === "string")
-    .map((c: any) => c.text)
-    .join("\n");
+  return sanitizeText(
+    content
+      .filter((c: any) => c?.type === "text" && typeof c.text === "string")
+      .map((c: any) => c.text)
+      .join("\n"),
+  );
 }
 
 // 工具调用的主参数：按常见键名找第一个字符串，都没有就取第一个字符串参数。不存结果，bash 输出动辄几十 KB
@@ -71,7 +90,7 @@ export function toolSummary(args: unknown): string {
   let v = TOOL_ARG_KEYS.map((k) => o[k]).find((x) => typeof x === "string" && x.trim());
   if (typeof v !== "string") v = Object.values(o).find((x) => typeof x === "string" && (x as string).trim());
   if (typeof v !== "string") return "";
-  return v.replace(/\s+/g, " ").trim().slice(0, TOOL_SUMMARY_MAX);
+  return sanitizeText(v).replace(/\s+/g, " ").trim().slice(0, TOOL_SUMMARY_MAX);
 }
 
 function extractTools(content: unknown): PeekTool[] {
@@ -81,7 +100,7 @@ function extractTools(content: unknown): PeekTool[] {
     .map((c: any) => ({ name: c.name, summary: toolSummary(c.arguments) }));
 }
 
-function parseSession(path: string, raw: string, mtime: number): PeekSession | null {
+function parseSession(path: string, raw: string, mtime: number, size: number): PeekSession | null {
   let cwd = "";
   let time = "";
   let name = "";
@@ -98,7 +117,7 @@ function parseSession(path: string, raw: string, mtime: number): PeekSession | n
       }
       if (line.includes('"type":"session_info"')) {
         const o = JSON.parse(line);
-        if (typeof o.name === "string" && o.name) name = o.name;
+        if (typeof o.name === "string") name = sanitizeText(o.name).trim(); // 空名字是显式清掉
         continue;
       }
       // 先用子串粗筛，省掉大部分行的 JSON.parse
@@ -127,6 +146,7 @@ function parseSession(path: string, raw: string, mtime: number): PeekSession | n
     name,
     msgs,
     mtime,
+    size,
     first: firstText.text.replace(/\s+/g, " ").slice(0, 80),
   };
 }
@@ -134,29 +154,32 @@ function parseSession(path: string, raw: string, mtime: number): PeekSession | n
 // 单个文件：mtime 没变直接用缓存，否则重新读和解析
 async function loadSession(file: string): Promise<PeekSession | null> {
   let mtime: number;
+  let size: number;
   try {
-    mtime = (await stat(file)).mtimeMs;
+    const st = await stat(file);
+    mtime = st.mtimeMs;
+    size = st.size;
   } catch {
     return null;
   }
   const hit = sessionCache.get(file);
-  if (hit && hit.mtime === mtime) return hit;
+  if (hit && hit.mtime === mtime && hit.size === size) return hit;
   let raw: string;
   try {
     raw = await readFile(file, "utf8");
   } catch {
     return null;
   }
-  const parsed = parseSession(file, raw, mtime);
+  const parsed = parseSession(file, raw, mtime, size);
   if (parsed) sessionCache.set(file, parsed);
   return parsed;
 }
 
 /** 全部会话，按最后修改时间倒序；文件没变的直接用缓存。
  * 目录遍历和文件读取都走异步 I/O，几百个会话也不会把 TUI 卡住 */
-export async function scanSessions(): Promise<PeekSession[]> {
+export async function scanSessions(root: string = sessionsDir()): Promise<PeekSession[]> {
   const files: string[] = [];
-  await walkJsonl(sessionsDir(), files);
+  await walkJsonl(root, files);
 
   const out: PeekSession[] = [];
   let next = 0;
@@ -179,6 +202,7 @@ export async function scanSessions(): Promise<PeekSession[]> {
 
 // 和 pi 自带的 /name 写同一种 session_info 记录，parentId 用文件里最后一条记录的 id
 export function renameSession(path: string, name: string): void {
+  name = sanitizeText(name).replace(/\n+/g, " ").trim(); // 和 pi 的 appendSessionInfo 一样，换行不能进 JSONL 的一行
   const raw = readFileSync(path, "utf8");
   const lines = raw.split("\n");
   let parentId: string | null = null;
@@ -227,18 +251,21 @@ export function trashCommands(path: string, platform: NodeJS.Platform = process.
 }
 
 // 优先进回收站（能恢复），每个途径都不行再直接删。exec 由调用方传入，方便测试；
-// 命令退出码为 0 但文件还在也当失败，继续试下一个
+// 命令退出码为 0 但文件还在也当失败，继续试下一个。命令超时被杀但其实已经把文件移走了的，
+// 事后再看一眼文件，别把"已进回收站"报成"永久删除"
 export async function deleteSession(
   path: string,
   exec: (cmd: string, args: string[]) => Promise<{ code: number }>,
   platform: NodeJS.Platform = process.platform,
 ): Promise<DeleteResult> {
+  const wasThere = existsSync(path);
   for (const [cmd, args] of trashCommands(path, platform)) {
     try {
       const r = await exec(cmd, args);
       if (r.code === 0 && !existsSync(path)) return "trash";
     } catch {
     }
+    if (wasThere && !existsSync(path)) return "trash";
   }
   try {
     rmSync(path, { force: true });

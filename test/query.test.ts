@@ -21,7 +21,7 @@ const shape = (q: string) => terms(q).map((t) => `${t.negate ? "-" : ""}${t.fiel
 
 function sess(texts: string[], name = "", cwd = "D:/proj"): PeekSession {
   return {
-    path: "p", cwd, time: "", name, first: texts[0] ?? "", mtime: 0,
+    path: "p", cwd, time: "", name, first: texts[0] ?? "", mtime: 0, size: 0,
     msgs: texts.map((text, i) => ({ role: i % 2 ? "assistant" : "user", text })),
   };
 }

@@ -67,6 +67,7 @@ test("英文界面：头部、时间标签、底部提示、预览标签都换�
       path: "p", cwd: "D:/x", time: new Date().toISOString(), name: "", first: "hello",
       msgs: [{ role: "user" as const, text: "hello" }, { role: "assistant" as const, text: "world" }],
       mtime: Date.now(),
+      size: 0,
     };
     const c: any = new PeekComponent([s], "D:/x", theme, mdTheme, 40, "hello @7d");
     const lines = c.render(120).map(strip);

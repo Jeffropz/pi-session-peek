@@ -128,7 +128,7 @@ Windows PowerShell 里先执行 `$env:PI_SESSION_PEEK_LANG = "en"` 再启动 pi�
 - 鼠标需要终端支持 SGR 鼠标上报和光标位置回报（`CSI 6 n`）。Windows Terminal、iTerm2、kitty、WezTerm、Alacritty、GNOME Terminal、VS Code 都支持，老式 Windows 控制台不支持。
 - 特别长的会话预览只显示最后 500 条消息，更早的命中仍会计数并提示。
 - `pi --peek` 不带值会被 pi 在启动时拒绝，不带关键词请用 `pi --rp`。
-- 只扫描 `~/.pi/agent/sessions`（或 `$PI_CODING_AGENT_DIR/sessions`）下的会话。
+- pi 默认布局下扫描 `~/.pi/agent/sessions`（或 `$PI_CODING_AGENT_DIR/sessions`）下所有项目的会话。pi 用了自定义会话目录（`--session-dir`、`$PI_CODING_AGENT_SESSION_DIR` 或 settings 里的 `sessionDir`）时只扫描那个目录，分叉也写到那里。
 
 ## 🗂️ 目录结构
 

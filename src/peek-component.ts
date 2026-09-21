@@ -39,6 +39,7 @@ export class PeekComponent implements Component, Focusable {
   private rendered = new WeakMap<PeekMsg, { w: number; lines: string[] }>(); // 每条消息渲染好的行，按宽度缓存
   private confirmingDelete = false; // Ctrl+D 之后等待确认
   private renaming = false; // Ctrl+R 之后正在输入名字
+  private busy = false; // 删除 / 重命名的异步回调还没回来：期间不能再删、改名、进入或分叉，免得对同一个文件动两次
   private renameInput: Input;
   private cachedWidth = -1;
   private cachedLines: string[] = [];
@@ -162,13 +163,19 @@ export class PeekComponent implements Component, Focusable {
         this.renaming = false;
         this.focused = this._focused;
         this.invalidate();
-        if (s && name && this.onRename) {
+        if (s && name && this.onRename && !this.busy) {
+          this.busy = true;
           void this.onRename(s, name).then((ok) => {
             if (ok) {
               s.name = name;
               // 名字参与搜索，改完可能就不再匹配当前关键词了
               this.refilter(true);
             }
+          }).catch(() => {
+            // 回调自己负责提示；这里吞掉，别变成 unhandled rejection
+          }).finally(() => {
+            // 放在 finally：回调抛了错也要解锁，否则删除 / 改名 / 进入全部永久失效
+            this.busy = false;
             this.invalidate();
             this.requestRender?.();
           });
@@ -191,7 +198,8 @@ export class PeekComponent implements Component, Focusable {
       this.invalidate();
       if (data === "y" || data === "Y" || matchesKey(data, Key.enter)) {
         const s = this.filtered[this.selected];
-        if (s && this.onDelete) {
+        if (s && this.onDelete && !this.busy) {
+          this.busy = true;
           void this.onDelete(s).then((ok) => {
             if (ok) {
               let i = this.all.indexOf(s);
@@ -203,6 +211,9 @@ export class PeekComponent implements Component, Focusable {
               this.previewKey = "";
               this.clearSelection();
             }
+          }).catch(() => {
+          }).finally(() => {
+            this.busy = false;
             this.invalidate();
             this.requestRender?.();
           });
@@ -220,7 +231,7 @@ export class PeekComponent implements Component, Focusable {
       return;
     }
     if (matchesKey(data, Key.ctrl("d"))) {
-      if (this.filtered.length && this.onDelete) {
+      if (this.filtered.length && this.onDelete && !this.busy) {
         this.confirmingDelete = true;
         this.invalidate();
       }
@@ -228,7 +239,7 @@ export class PeekComponent implements Component, Focusable {
     }
     if (matchesKey(data, Key.ctrl("r"))) {
       const s = this.filtered[this.selected];
-      if (s && this.onRename) {
+      if (s && this.onRename && !this.busy) {
         this.renaming = true;
         this.renameInput.setValue(s.name || "");
         this.focused = this._focused;
@@ -295,12 +306,12 @@ export class PeekComponent implements Component, Focusable {
     }
     if (matchesKey(data, Key.enter)) {
       const s = this.filtered[this.selected];
-      if (s) this.onResume?.(s);
+      if (s && !this.busy) this.onResume?.(s);
       return;
     }
     if (matchesKey(data, Key.ctrl("o"))) {
       const s = this.filtered[this.selected];
-      if (s) this.onFork?.(s);
+      if (s && !this.busy) this.onFork?.(s);
       return;
     }
     // 其余按键交给搜索框
@@ -374,7 +385,7 @@ export class PeekComponent implements Component, Focusable {
       // 单击在 press 里已经选中了，双击才进入
       const s = this.filtered[itemAt()];
       if (!s) return undefined;
-      if (!this.renaming && (ev.clickCount ?? 1) >= 2) this.onResume?.(s);
+      if (!this.renaming && !this.busy && (ev.clickCount ?? 1) >= 2) this.onResume?.(s);
       return { handled: true, render: false };
     }
     if (ev.type !== "press") return undefined;

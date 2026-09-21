@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Terminal escape sequences and control characters in message text, tool arguments and session names are stripped when parsing, so a pasted colour dump or an OSC sequence in a reply can no longer break the preview layout or reach the terminal.
+- While a delete or rename is still running, `Ctrl+D`, `Ctrl+R`, `Enter`, `Ctrl+O` and double-click are ignored, so the same file cannot be deleted twice or resumed mid-delete.
+- Delete: if a trash command times out but the file is already gone, the result is reported as "moved to trash" instead of falling through to a permanent delete.
+- The scan follows the session directory pi is actually using (`--session-dir`, `$PI_CODING_AGENT_SESSION_DIR` or `sessionDir` in settings), and forks are written there too. With the default layout all projects are still listed.
+- The parse cache is keyed on file size as well as mtime, so two quick writes within the same timestamp tick no longer serve stale content.
+- Rename strips newlines from the new name, matching pi's own `/name`, so the appended record always stays on one line.
+
 ## 0.5.0
 
 - Mouse support in both panes. Click a session to select it, double-click to resume, wheel over the list to move the selection, wheel over the preview to scroll it (`Alt` for five times faster), click the scope label to toggle it, click the search box or rename line to move the cursor. Pi only enables mouse reporting in fullscreen mode, so in the regular mode the picker turns it on itself while open and locates itself on screen with a cursor position query; the terminal's own text selection is unavailable meanwhile (usually `Shift` restores it). `PI_SESSION_PEEK_MOUSE=0` disables it.
