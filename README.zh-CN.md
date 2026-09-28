@@ -183,6 +183,10 @@ git push --follow-tags
 
 `npm version` 一上来先检查 git 工作区是否干净，不干净就报 `Git working directory not clean.` 退出，所以 `CHANGELOG.md` 在内的所有改动都要先提交（未跟踪的文件不影响）。然后才跑 `package.json` 里声明的钩子：`preversion` 先确认 `CHANGELOG.md` 里有非空的 `## Unreleased` 段落，再跑 `npm run check`，任一不通过就在改动任何文件之前中止；`version` 跑 `scripts/release-changelog.mjs`，把 `## Unreleased` 改成新版本号并 `git add`。然后 npm 把 `package.json`、lockfile 和 `CHANGELOG.md` 一起提交成 `chore: release X.Y.Z`（提交信息定义在 `.npmrc`），并打上 `vX.Y.Z` 的 tag。
 
+## 🔗 友情链接
+
+- [LinuxDo — 真诚、友善、团结、专业](https://linux.do)
+
 ## 📄 许可证
 
 MIT，见 [`LICENSE`](./LICENSE)。

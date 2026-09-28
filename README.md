@@ -183,6 +183,10 @@ git push --follow-tags
 
 `npm version` first checks that the working tree is clean and stops with `Git working directory not clean.` otherwise, so everything, including `CHANGELOG.md`, has to be committed before the bump. Untracked files are fine. It then runs the hooks declared in `package.json`: `preversion` checks that `CHANGELOG.md` has a non-empty `## Unreleased` section and runs `npm run check`, aborting the bump before anything is touched if either fails; `version` runs `scripts/release-changelog.mjs`, which renames `## Unreleased` to the new version and stages the file. npm then commits `package.json`, the lockfile and `CHANGELOG.md` as `chore: release X.Y.Z` (message set in `.npmrc`) and tags it `vX.Y.Z`.
 
+## 🔗 Friend links
+
+- [LinuxDo — sincere, friendly, united, professional](https://linux.do)
+
 ## 📄 License
 
 MIT. See [`LICENSE`](./LICENSE).
