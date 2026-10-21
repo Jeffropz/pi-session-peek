@@ -23,7 +23,8 @@ export function listRows(s: PeekSession, sel: boolean, lw: number, rt: RoleTerms
   const hitBadge = hasBody
     ? ` ·${s.msgs.reduce((n, m) => n + (anyMatch(m.text, rt[m.role]) ? 1 : 0), 0)}`
     : "";
-  const l1 = `${sel ? "›" : " "} ${time} ${cwdTail}${hitBadge}`;
+  const label = s.name?.trim();
+  const l1 = `${sel ? "›" : " "} ${time} ${label || cwdTail}${hitBadge}`;
   const snip = hasBody ? snippet(s.msgs, rt, lw) : undefined;
   const l2 = snip !== undefined
     ? `  ${highlight(snip.text, rt[snip.role], t)}`
