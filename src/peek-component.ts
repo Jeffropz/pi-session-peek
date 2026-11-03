@@ -14,7 +14,7 @@ import { msg } from "./i18n.ts";
 import { DragSelect } from "./drag-select.ts";
 import { BODY_TOP, bodyRows, paneWidths } from "./layout.ts";
 import { buildList, followSelection, listRows, visibleItems } from "./list.ts";
-import { buildPreview, initialOffset, nextMatchTarget, type RenderCache } from "./preview.ts";
+import { buildPreview, initialOffset, nextMatchTarget, type RenderCache, type RoleFilter } from "./preview.ts";
 import { matchesSession, parseQuery, roleTerms, type ParsedQuery, type RoleTerms } from "./query.ts";
 import { bounds, highlightColumns, rowColumns, selectionText, type Selection } from "./selection.ts";
 import type { PeekSession } from "./sessions.ts";
@@ -41,6 +41,7 @@ export class PeekComponent implements Component, Focusable {
   private previewOffset = 0;
   private previewKey = ""; // 预览缓存的键（会话 + 关键词 + 宽度 + 工具开关），置空强制重建
   private showTools = false; // Ctrl+T：预览里显示每次工具调用的一行摘要
+  private roleFilter: RoleFilter = "all"; // Ctrl+E：预览只看自己发的 / 只看 AI / 全部，循环切换
   private previewLines: string[] = [];
   private matchLines: number[] = []; // 预览里含关键词的行（升序），Ctrl+N / Ctrl+P 用
   private rendered: RenderCache = new WeakMap(); // 每条消息渲染好的行，按宽度缓存
@@ -297,6 +298,13 @@ export class PeekComponent implements Component, Focusable {
       this.invalidate();
       return;
     }
+    if (matchesKey(data, Key.ctrl("e"))) {
+      this.roleFilter = this.roleFilter === "all" ? "user" : this.roleFilter === "user" ? "assistant" : "all";
+      this.previewKey = "";
+      this.drag.clear();
+      this.invalidate();
+      return;
+    }
     if (matchesKey(data, Key.ctrl("n"))) {
       this.jumpMatch(1);
       return;
@@ -485,13 +493,13 @@ export class PeekComponent implements Component, Focusable {
     return { rt, hasBody: rt.user.length > 0 || rt.assistant.length > 0 };
   }
 
-  // 右栏。预览键（会话 + 关键词 + 宽度 + 工具开关）没变就复用；变了重建，滚动位置放到首个命中处或底部
+  // 右栏。预览键（会话 + 关键词 + 宽度 + 工具开关 + 角色过滤）没变就复用；变了重建，滚动位置放到首个命中处或底部
   private rebuildPreview(rw: number, rt: RoleTerms): void {
     const s = this.filtered[this.selected];
-    const key = s ? `${s.path}|${this.getQuery()}|${rw}|${this.showTools ? "t" : ""}` : "none";
+    const key = s ? `${s.path}|${this.getQuery()}|${rw}|${this.showTools ? "t" : ""}|${this.roleFilter}` : "none";
     if (key === this.previewKey) return;
     this.previewKey = key;
-    const p = buildPreview(s, rt, rw, this.showTools, this.theme, this.mdTheme, this.rendered);
+    const p = buildPreview(s, rt, rw, this.showTools, this.theme, this.mdTheme, this.rendered, this.roleFilter);
     this.previewLines = p.lines;
     this.matchLines = p.matchLines;
     this.previewOffset = initialOffset(p, this.bodyHeight());

@@ -38,6 +38,9 @@ export interface Preview {
   matchLines: number[]; // 含关键词的行（升序），Ctrl+N / Ctrl+P 用
 }
 
+// 预览只画哪个角色的消息：全部 / 只看我发的 / 只看 AI。只影响预览，不影响左栏过滤（搜索语法的 user: / ai: 管那个）
+export type RoleFilter = "all" | "user" | "assistant";
+
 // 右栏内容。没有会话时只有一行提示
 export function buildPreview(
   s: PeekSession | undefined,
@@ -47,16 +50,18 @@ export function buildPreview(
   t: PeekTheme,
   mdTheme: MarkdownTheme,
   cache: RenderCache,
+  role: RoleFilter = "all",
 ): Preview {
   if (!s) return { lines: [t.fg("dim", msg("noMatch"))], matchLines: [] };
 
   const lines: string[] = [];
   const matchLines: number[] = [];
-  // 消息数只算有文字的，纯工具轮次不计
-  const textCount = s.msgs.reduce((n, m) => n + (m.text ? 1 : 0), 0);
+  // 消息数只算有文字的，纯工具轮次不计；角色过滤时只算画出来的那一侧
+  const textCount = s.msgs.reduce((n, m) => n + (m.text && (role === "all" || m.role === role) ? 1 : 0), 0);
   lines.push(
     truncateToWidth(
-      t.fg("dim", `${s.cwd} • ${msg("msgCount", { n: textCount })}${s.name ? " • " + s.name : ""}`),
+      t.fg("dim", `${s.cwd} • ${msg("msgCount", { n: textCount })}${s.name ? " • " + s.name : ""}`) +
+        (role !== "all" ? t.fg("warning", msg(role === "user" ? "viewUser" : "viewAi")) : ""),
       rw,
     ),
   );
@@ -88,6 +93,7 @@ export function buildPreview(
 
   let prevRole: PeekMsg["role"] | undefined; // 上一条画出来的消息的角色
   for (const m of msgs) {
+    if (role !== "all" && m.role !== role) continue; // Ctrl+E 角色过滤：另一侧的消息整条不画
     const tools = showTools ? (m.tools ?? []) : [];
     if (!m.text && !tools.length) continue; // 工具隐藏时，只有工具调用的 AI 轮次整条跳过
     const terms = rt[m.role]; // user: 的词只在用户消息里高亮，ai: 的只在 AI 回复里

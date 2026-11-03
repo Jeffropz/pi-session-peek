@@ -11,7 +11,7 @@ setLang("zh");
 
 const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
 
-const KEY = { enter: "\r", tab: "\t", up: "\x1b[A", down: "\x1b[B", bs: "\x7f", esc: "\x1b", cc: "\x03", cd: "\x04", co: "\x0f", cr: "\x12", ct: "\x14", cu: "\x15", cy: "\x19" };
+const KEY = { enter: "\r", tab: "\t", up: "\x1b[A", down: "\x1b[B", bs: "\x7f", esc: "\x1b", cc: "\x03", cd: "\x04", ce: "\x05", co: "\x0f", cr: "\x12", ct: "\x14", cu: "\x15", cy: "\x19" };
 
 function mk(cwd: string, texts: string[], ageDays: number, name = ""): PeekSession {
   const mtime = Date.now() - ageDays * 86400e3;
@@ -618,6 +618,48 @@ test("工具摘要不参与搜索和高亮", () => {
   assert.equal(c.filtered.length, 1);
   rightCol(c);
   assert.equal(c.matchLines.length, 1);
+});
+
+test("Ctrl+E 循环切换预览角色：全部 → 只看我发的 → 只看 AI → 全部，消息数跟着变", () => {
+  const c = make(toolFixture(), "D:/proj");
+  let lines = rightCol(c);
+  assert.ok(lines[0].includes("3 条消息")); // 纯工具轮次不计数
+  assert.ok(!lines[0].includes("^E"));
+  c.handleInput(KEY.ce);
+  lines = rightCol(c);
+  assert.ok(lines[0].includes("只看我发的[^E]"));
+  assert.ok(lines[0].includes("1 条消息")); // 只算画出来的那一侧
+  assert.ok(lines.some((l) => l.includes("fix the bug")));
+  assert.ok(!lines.some((l) => l.includes("let me look")));
+  assert.ok(!lines.some((l) => l.startsWith("🤖 AI")));
+  c.handleInput(KEY.ce);
+  lines = rightCol(c);
+  assert.ok(lines[0].includes("只看 AI[^E]"));
+  assert.ok(lines[0].includes("2 条消息")); // let me look + done, fixed；纯工具轮次不计
+  assert.ok(lines.some((l) => l.includes("let me look")));
+  assert.ok(!lines.some((l) => l.includes("fix the bug")));
+  assert.ok(!lines.some((l) => l.startsWith("👤 你")));
+  c.handleInput(KEY.ce);
+  lines = rightCol(c);
+  assert.ok(!lines[0].includes("^E"));
+  assert.ok(lines.some((l) => l.includes("fix the bug")));
+  assert.ok(lines.some((l) => l.includes("let me look")));
+});
+
+test("Ctrl+E 角色过滤和工具开关、命中跳转共存；只画那一侧的工具行", () => {
+  const c = make(toolFixture(), "D:/proj");
+  c.handleInput(KEY.ct);
+  c.handleInput(KEY.ce); // 只看我发的：AI 侧的工具行也不能出现
+  assert.ok(!rightCol(c).some((l) => l.includes("⚙")));
+  c.handleInput(KEY.ce); // 只看 AI：工具行在
+  assert.ok(rightCol(c).some((l) => l.includes("⚙ read")));
+  c.handleInput(KEY.ce); // 回到全部
+  type(c, "fixed");
+  c.render(100);
+  assert.equal(c.matchLines.length, 1); // 命中行号基于过滤后的预览
+  c.handleInput(KEY.ce); // 只看我发的：fixed 在 AI 侧，预览里没有命中了
+  c.render(100); // 按键只重置缓存键，重建发生在 render 里
+  assert.equal(c.matchLines.length, 0);
 });
 
 // 鼠标：坐标以组件左上角为原点，第 0 行标题、第 1 行搜索框、第 2 行分隔线，第 3 行起是双栏

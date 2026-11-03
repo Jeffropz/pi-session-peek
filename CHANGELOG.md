@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `Ctrl+E` cycles the preview between all messages, only your messages and only the AI's replies. The header of the preview shows the active filter and the message count follows it; hits on the hidden side are not counted or jumped to. The session list is unaffected.
+  `Ctrl+E` 在预览里循环切换 全部对话 → 只看我发的 → 只看 AI 回答。预览首行显示当前过滤状态，消息数跟着变；被隐藏一侧的命中不计数、不跳转。左栏列表不受影响。
+
 ## 0.6.0
 
 - Search: plain terms match the working directory again, but only in the all-projects scope. The current-directory scope keeps the 0.5.2 behaviour (conversation and session name only), since every session there shares the same path prefix.

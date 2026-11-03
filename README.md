@@ -68,6 +68,7 @@ In TUI mode, run `/peek` and start typing. Press `Enter` on a session to continu
 | `Shift+↑` `Shift+↓` | Scroll preview by three lines |
 | `Ctrl+N` `Ctrl+P` | Next / previous hit line outside the current view; the top-right corner shows `hit k/n` |
 | `Ctrl+T` | Show / hide tool calls in the preview. Each call is one line with the tool name and its main argument (command, path, URL, query). Results are never shown. |
+| `Ctrl+E` | Cycle the preview through all messages → only yours → only the AI's. The message count follows the filter. Purely a view filter: the session list is unaffected, and hits on the hidden side are not counted or jumped to. |
 | `Enter` | Resume the session |
 | `Ctrl+O` | Fork the session and open the fork |
 | `Ctrl+R` | Rename. Writes the same `session_info` entry as `/name`. |
