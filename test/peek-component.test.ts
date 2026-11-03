@@ -11,7 +11,7 @@ setLang("zh");
 
 const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
 
-const KEY = { enter: "\r", tab: "\t", up: "\x1b[A", down: "\x1b[B", bs: "\x7f", esc: "\x1b", cc: "\x03", cd: "\x04", cf: "\x06", co: "\x0f", cr: "\x12", ct: "\x14", cu: "\x15" };
+const KEY = { enter: "\r", tab: "\t", up: "\x1b[A", down: "\x1b[B", bs: "\x7f", esc: "\x1b", cc: "\x03", cd: "\x04", co: "\x0f", cr: "\x12", ct: "\x14", cu: "\x15", cy: "\x19" };
 
 function mk(cwd: string, texts: string[], ageDays: number, name = ""): PeekSession {
   const mtime = Date.now() - ageDays * 86400e3;
@@ -65,6 +65,18 @@ test("Tab 切换范围", () => {
   assert.equal(c.filtered.length, 4);
   c.handleInput(KEY.tab);
   assert.equal(c.filtered.length, 2);
+});
+
+test("普通词只在全局范围匹配路径", () => {
+  // D:/other 的会话正文里没有 other 这个词，只能靠路径命中
+  const c = make(fixture(), "D:/nowhere");
+  type(c, "other");
+  assert.equal(c.filtered.length, 1);
+  assert.equal(c.filtered[0].cwd, "D:/other");
+  c.handleInput(KEY.tab); // 当前目录树范围：路径不再参与，无匹配
+  assert.equal(c.filtered.length, 0);
+  c.handleInput(KEY.tab);
+  assert.equal(c.filtered.length, 1);
 });
 
 test("多关键词 AND", () => {
@@ -299,7 +311,7 @@ test("焦点跟着活跃的输入框走", () => {
   assert.equal(c.input.focused, true);
 });
 
-test("预览滚动：Ctrl+U / Ctrl+F，PgUp / PgDn，到边界夹住", () => {
+test("预览滚动：Ctrl+U / Ctrl+Y，PgUp / PgDn，到边界夹住", () => {
   const long = mk("D:/proj", Array.from({ length: 60 }, (_, i) => `message number ${i} ${"x".repeat(80)}`), 1);
   const c = make([long], "D:/proj");
   c.render(120);
@@ -308,13 +320,17 @@ test("预览滚动：Ctrl+U / Ctrl+F，PgUp / PgDn，到边界夹住", () => {
   c.handleInput(KEY.cu);
   const up = c.previewOffset;
   assert.ok(up < bottom);
-  c.handleInput(KEY.cf);
+  c.handleInput(KEY.cy);
   assert.equal(c.previewOffset, bottom);
-  c.handleInput(KEY.cf);
+  c.handleInput(KEY.cy);
   c.render(120);
   assert.equal(c.previewOffset, bottom);
   c.handleInput("\x1b[5~");
   assert.ok(c.previewOffset < bottom);
+  // PgDn 整页，比半页的 Ctrl+Y 步长大；Ctrl+F 被 pi 的全文搜索占用，不再翻页
+  const before = c.previewOffset;
+  c.handleInput("\x1b[6~");
+  assert.equal(c.previewOffset, Math.min(bottom, before + c.bodyHeight()));
 });
 
 test("有关键词时预览定位到第一个命中，Ctrl+N / Ctrl+P 在命中间跳转并回绕", () => {

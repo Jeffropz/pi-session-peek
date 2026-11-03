@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Search: plain terms match the working directory again, but only in the all-projects scope. The current-directory scope keeps the 0.5.2 behaviour (conversation and session name only), since every session there shares the same path prefix.
+- `Ctrl+Y` replaces `Ctrl+F` for scrolling the preview down half a page. In pi's fullscreen mode `Ctrl+F` is captured by pi's own transcript search on Windows/WSL before the picker ever sees it.
+- The picker now declares `capturesViewportInput`, so in pi's fullscreen mode `PgUp` / `PgDn` reach the picker instead of scrolling pi's transcript.
+
 ## 0.5.2
 
 - Wheel over the list now scrolls the list like a scrollbar instead of moving the selection. The selection stays where it is and comes back into view on `↑` / `↓`, a click, a new filter or a delete.

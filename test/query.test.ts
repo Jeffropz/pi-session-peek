@@ -26,14 +26,23 @@ function sess(texts: string[], name = "", cwd = "D:/proj"): PeekSession {
   };
 }
 
-test("matchesSession: 不区分大小写，每个词都要命中，名字也算，工作目录不算（要用 dir:）", () => {
+test("matchesSession: 不区分大小写，每个词都要命中，名字也算；工作目录只在全局范围算", () => {
   const s = sess(["Hello World", "second Reply"], "My Name");
   assert.ok(matchesSession(s, terms("hello reply"))); // 分散在两条消息里也行
   assert.ok(matchesSession(s, terms('"my name"')));
-  assert.ok(!matchesSession(s, terms("d:/proj"))); // 路径里的词不算：当前目录树下所有会话都带同一段前缀
+  assert.ok(!matchesSession(s, terms("d:/proj"))); // 默认（当前目录树范围）：路径词不算，共享前缀会命中全部会话
+  assert.ok(matchesSession(s, terms("d:/proj"), true)); // 全局范围：普通词也匹配路径
   assert.ok(matchesSession(s, terms("dir:proj")));
   assert.ok(!matchesSession(s, terms("hello missing")));
   assert.ok(!matchesSession(sess([]), terms("x")));
+});
+
+test("matchesSession: 全局范围下排除词也看路径，dir: 两种范围都可用", () => {
+  const s = sess(["hello"], "", "D:/beta");
+  assert.ok(!matchesSession(s, terms("-beta"), true)); // 路径命中，排除生效
+  assert.ok(matchesSession(s, terms("-beta"))); // 当前范围不看路径，不命中所以保留
+  assert.ok(!matchesSession(s, terms("-dir:beta")));
+  assert.ok(matchesSession(s, terms("dir:beta"), true));
 });
 
 test("普通词：正则元字符按字面匹配", () => {

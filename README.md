@@ -64,7 +64,7 @@ In TUI mode, run `/peek` and start typing. Press `Enter` on a session to continu
 | `Tab` | Current directory tree ↔ all projects |
 | `↑` `↓` | Select session |
 | `PgUp` `PgDn` | Scroll preview by a page |
-| `Ctrl+U` `Ctrl+F` | Scroll preview by half a page |
+| `Ctrl+U` `Ctrl+Y` | Scroll preview by half a page |
 | `Shift+↑` `Shift+↓` | Scroll preview by three lines |
 | `Ctrl+N` `Ctrl+P` | Next / previous hit line outside the current view; the top-right corner shows `hit k/n` |
 | `Ctrl+T` | Show / hide tool calls in the preview. Each call is one line with the tool name and its main argument (command, path, URL, query). Results are never shown. |
@@ -107,7 +107,7 @@ The filter is case-insensitive and matches anywhere in the text. Whitespace sepa
 
 Quotes are the escape hatch: `"-foo"`, `"a|b"`, `"name:x"` and `"/x/"` search for those characters literally. A regex that fails to compile is searched as plain text. Only positive terms are highlighted in the preview, and `name:` / `dir:` terms never touch the conversation, so `name:auth` alone shows the full conversation with no highlights.
 
-The search index holds user and assistant messages and the session name. The working directory is matched only by `dir:` / `cwd:` terms: with the current-directory scope every session shares the same path prefix, so a plain word from the path would match all of them. The index does not hold tool call arguments or tool results, and the tool lines shown by `Ctrl+T` are never matched or highlighted.
+The search index holds user and assistant messages and the session name. Plain words also match the working directory, but only in the all-projects scope: with the current-directory scope every session shares the same path prefix, so a plain word from the path would match all of them; use `dir:` / `cwd:` to match the path in that scope. The index does not hold tool call arguments or tool results, and the tool lines shown by `Ctrl+T` are never matched or highlighted.
 
 ## 🌐 Language
 

@@ -29,6 +29,9 @@ const WHEEL_ITEMS = 1; // 滚轮每格滚几个列表项（每项两行）。只
 const HINT_MS = 1500; // 底部"已复制"提示停留时间
 
 export class PeekComponent implements Component, Focusable {
+  // 声明了它，pi 全屏模式才把 PageUp/PageDown 等视口按键交给组件（shouldDeferViewportInput），
+  // 否则被 pi 截去滚主对话记录。Ctrl+F 例外：pi 的全文搜索绑定在 defer 检查之前，永远到不了组件
+  readonly capturesViewportInput = true;
   private input: Input;
   private scope: "current" | "all";
   private filtered: PeekSession[] = [];
@@ -122,7 +125,7 @@ export class PeekComponent implements Component, Focusable {
     let out = this.all;
     if (this.scope === "current") out = out.filter((s) => this.inCurrentTree(s));
     if (since) out = out.filter((s) => s.mtime >= since);
-    if (terms.length) out = out.filter((s) => matchesSession(s, terms));
+    if (terms.length) out = out.filter((s) => matchesSession(s, terms, this.scope === "all"));
     this.filtered = out;
     const idx = prev ? out.indexOf(prev) : -1;
     this.selected = idx >= 0 ? idx : keepSelection ? Math.min(this.selected, Math.max(0, out.length - 1)) : 0;
@@ -271,7 +274,7 @@ export class PeekComponent implements Component, Focusable {
       this.invalidate();
       return;
     }
-    if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.ctrl("f"))) {
+    if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.ctrl("y"))) {
       const step = matchesKey(data, Key.pageDown) ? this.bodyHeight() : Math.max(1, this.bodyHeight() >> 1);
       this.previewOffset += step;
       this.invalidate();
