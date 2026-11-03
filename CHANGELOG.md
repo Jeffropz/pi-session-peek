@@ -3,8 +3,11 @@
 ## Unreleased
 
 - Search: plain terms match the working directory again, but only in the all-projects scope. The current-directory scope keeps the 0.5.2 behaviour (conversation and session name only), since every session there shares the same path prefix.
+  搜索：普通词重新支持匹配工作目录，但仅在「全部项目」范围下生效；当前目录树范围保持 0.5.2 的行为（只匹配对话和会话名），因为该范围下所有会话共享同一段路径前缀。
 - `Ctrl+Y` replaces `Ctrl+F` for scrolling the preview down half a page. In pi's fullscreen mode `Ctrl+F` is captured by pi's own transcript search on Windows/WSL before the picker ever sees it.
+  预览向下翻半页由 `Ctrl+F` 改为 `Ctrl+Y`：pi 全屏模式下 `Ctrl+F` 会被 pi 自己的全文搜索（Windows/WSL）先行截获，选择器根本收不到。
 - The picker now declares `capturesViewportInput`, so in pi's fullscreen mode `PgUp` / `PgDn` reach the picker instead of scrolling pi's transcript.
+  选择器现在声明了 `capturesViewportInput`，pi 全屏模式下 `PgUp` / `PgDn` 会送达选择器，不再被 pi 截去滚动主对话记录。
 
 ## 0.5.2
 
